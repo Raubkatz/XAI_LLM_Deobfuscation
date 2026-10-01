@@ -1,18 +1,23 @@
 # LLM Deobfuscation Machine-Learning Pipeline
 
-This repository contains the machine-learning and explainability pipeline for the LLM deobfuscation experiments. It extracts experiment metrics from nested JSON result files, creates a configurable classification dataset, generates repeated stratified train/test splits with optional class balancing, trains CatBoost models, and performs aggregated post-training explainability analysis.
+This repository contains the machine-learning and explainability pipeline for the LLM deobfuscation experiments. It starts from the merged experiment dataset `combined_metrics_with_origin.csv`, creates a configurable classification dataset, generates repeated stratified train/test splits with optional class balancing, trains CatBoost models, and performs aggregated post-training explainability analysis.
 
 ## Pipeline
 
 | Stage | Script | Purpose |
 |---|---|---|
-| 00 | `00_create_csv.py` | Recursively extract experiment metadata and metrics from `result.metrics.summary.json` files and create `combined_metrics.csv`. |
-| 01 | `01_create_dataset.py` | Select features and one prediction target, rename the target to `class`, perform light cleaning, and create the final ML input CSV and descriptive report. |
+| 01 | `01_create_dataset.py` | Load `combined_metrics_with_origin.csv`, select features and one prediction target, rename the target to `class`, perform light cleaning, and create the final ML input CSV and descriptive report. |
 | 02 | `02_train_test_splits.py` | Create repeated stratified train/test splits over configurable random seeds. Optional random undersampling and ADASYN are applied **only to the training data**. |
 | 03 | `03_train_CatBoost.py` | Train one CatBoost model for every Stage-02 split. Supports ordinary CatBoost or optional Optuna/TPE hyperparameter optimization. |
 | 04 | `04_explainability.py` | Load all trained CatBoost models and perform aggregated evaluation, feature importance, native SHAP, ICE/PDP, confusion-matrix, and predicted-class feature-distribution analysis. |
 
-Stage 01 explicitly selects the feature set and converts the selected prediction target to the common column name `class`.
+Stage 01 loads the initial dataset:
+
+```text
+combined_metrics_with_origin.csv
+```
+
+It explicitly selects the feature set and converts the selected prediction target to the common column name `class`.
 
 Stage 02 performs the stratified split first and applies undersampling and/or ADASYN only to the training partition; the test partition remains untouched. 
 
@@ -22,10 +27,15 @@ Stage 04 aggregates evaluation and explainability results across the independent
 
 ## Basic Workflow
 
+The pipeline starts from:
+
+```text
+combined_metrics_with_origin.csv
+```
+
 Run the scripts in order:
 
 ```bash
-python 00_create_csv.py
 python 01_create_dataset.py
 python 02_train_test_splits.py
 python 03_train_CatBoost.py
@@ -162,7 +172,6 @@ No TensorFlow, PyTorch, LightGBM, LIME, or seaborn installation is required for 
 
 The complete workflow produces:
 
-- combined experiment-level CSV data;
 - configurable feature/class datasets;
 - repeated stratified train/test splits;
 - optional undersampled and/or ADASYN-balanced training datasets;
