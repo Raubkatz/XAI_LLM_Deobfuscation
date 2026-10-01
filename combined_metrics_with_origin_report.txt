@@ -1,0 +1,247 @@
+==========================================================================================
+LLM METRICS + ORIGIN COMPLEXITY MERGE REPORT
+==========================================================================================
+
+MERGE RELATIONSHIP:
+
+    origin experiment
+        -> binja evaluation rows
+        -> ghidra evaluation rows
+        -> all corresponding LLM rows
+
+==========================================================================================
+INPUT DIMENSIONS
+==========================================================================================
+
+LLM evaluation rows:             30,762
+LLM evaluation columns:          30
+
+Origin rows before filtering:    13,010
+AppleDouble rows removed:        0
+Real origin rows:                13,010
+
+Matched evaluation rows:         24,842
+Unmatched evaluation rows:       5,920
+Discarded unmatched rows:        5,920
+
+Final merged rows:               24,842
+Final merged columns:            105
+
+Match rate:                      80.76%
+Retained evaluation percentage: 80.76%
+
+Discard unmatched rows:          True
+
+==========================================================================================
+DECOMPILER DISTRIBUTION
+==========================================================================================
+
+binja                               12,421
+ghidra                              12,421
+
+==========================================================================================
+EXPERIMENT SUFFIX DISTRIBUTION
+==========================================================================================
+
+s                                   24,842
+
+==========================================================================================
+ORIGIN MERGE KEY
+==========================================================================================
+
+    category
+    filename
+    obfuscation_type
+    optimization
+    experiment_suffix
+
+decompiler is deliberately NOT part of the origin merge key.
+llm is deliberately NOT part of the origin merge key.
+experiment_suffix IS part of the origin merge key.
+
+==========================================================================================
+UNMATCHED EVALUATION ROW POLICY
+==========================================================================================
+
+Evaluation rows without a corresponding origin sample were discarded.
+
+Unmatched rows identified:       5,920
+Unmatched rows discarded:        5,920
+
+==========================================================================================
+FINAL COLUMN ORDER
+==========================================================================================
+
+  1. category
+  2. filename
+  3. obfuscation_type
+  4. optimization
+  5. decompiler
+  6. llm
+  7. syntax_pass_rate
+  8. exe_pass
+  9. compile_and_link_rate
+ 10. simplification.deobf_nloc
+ 11. simplification.deobf_func_num
+ 12. simplification.deobf_cyclomatic
+ 13. simplification.deobf_halstead_length
+ 14. simplification.deobf_avg_ccn
+ 15. simplification.decrease_nloc
+ 16. simplification.decrease_cyclomatic
+ 17. simplification.decrease_halstead_length
+ 18. simplification.nloc_difference_score
+ 19. similarity.codebleu
+ 20. similarity.ngram_match_score
+ 21. similarity.weighted_ngram_match_score
+ 22. similarity.syntax_match_score
+ 23. similarity.dataflow_match_score
+ 24. combined.pass
+ 25. combined.simplification
+ 26. combined.similarity
+ 27. combined.total
+ 28. experiment_folder
+ 29. json_path
+ 30. experiment_suffix
+ 31. compiler
+ 32. gcc_version
+ 33. obfuscator
+ 34. tigress_version
+ 35. sample_id
+ 36. c_filename
+ 37. c_path
+ 38. source_sha256
+ 39. source_empty
+ 40. lizard_parse_success
+ 41. origin.nloc
+ 42. origin.func_num
+ 43. origin.cyclomatic
+ 44. origin.tokens
+ 45. origin.avg_ccn
+ 46. origin.ccn_mean
+ 47. origin.ccn_median
+ 48. origin.ccn_std
+ 49. origin.ccn_min
+ 50. origin.ccn_max
+ 51. origin.function_nloc_mean
+ 52. origin.function_nloc_median
+ 53. origin.function_nloc_std
+ 54. origin.function_nloc_min
+ 55. origin.function_nloc_max
+ 56. origin.function_tokens_mean
+ 57. origin.function_tokens_median
+ 58. origin.function_tokens_std
+ 59. origin.function_tokens_min
+ 60. origin.function_tokens_max
+ 61. origin.parameter_count_total
+ 62. origin.parameters_mean
+ 63. origin.parameters_median
+ 64. origin.parameters_std
+ 65. origin.parameters_min
+ 66. origin.parameters_max
+ 67. origin.function_length_mean
+ 68. origin.function_length_median
+ 69. origin.function_length_std
+ 70. origin.function_length_min
+ 71. origin.function_length_max
+ 72. origin.halstead_length
+ 73. origin.halstead_vocab
+ 74. origin.halstead_volume
+ 75. origin.halstead_distinct_operators
+ 76. origin.halstead_distinct_operands
+ 77. origin.halstead_total_operators
+ 78. origin.halstead_total_operands
+ 79. origin.physical_lines
+ 80. origin.nonempty_lines
+ 81. origin.blank_lines
+ 82. origin.preprocessor_lines
+ 83. origin.comment_only_lines_approx
+ 84. origin.characters
+ 85. origin.bytes_utf8
+ 86. origin.keyword_if_count
+ 87. origin.keyword_else_count
+ 88. origin.keyword_for_count
+ 89. origin.keyword_while_count
+ 90. origin.keyword_do_count
+ 91. origin.keyword_switch_count
+ 92. origin.keyword_case_count
+ 93. origin.keyword_goto_count
+ 94. origin.keyword_return_count
+ 95. origin.keyword_break_count
+ 96. origin.keyword_continue_count
+ 97. origin.logical_and_count
+ 98. origin.logical_or_count
+ 99. origin.ternary_question_count
+100. origin.max_brace_nesting
+101. origin.avg_open_brace_nesting
+102. gcc_syntax_checked
+103. gcc_syntax_pass
+104. gcc_syntax_error
+105. merge_key
+
+==========================================================================================
+ORIGIN METRIC COVERAGE
+==========================================================================================
+
+origin.nloc                                                            0        0.00%
+origin.func_num                                                        0        0.00%
+origin.cyclomatic                                                      0        0.00%
+origin.tokens                                                          0        0.00%
+origin.avg_ccn                                                         0        0.00%
+origin.ccn_mean                                                        0        0.00%
+origin.ccn_median                                                      0        0.00%
+origin.ccn_std                                                         0        0.00%
+origin.ccn_min                                                         0        0.00%
+origin.ccn_max                                                         0        0.00%
+origin.function_nloc_mean                                              0        0.00%
+origin.function_nloc_median                                            0        0.00%
+origin.function_nloc_std                                               0        0.00%
+origin.function_nloc_min                                               0        0.00%
+origin.function_nloc_max                                               0        0.00%
+origin.function_tokens_mean                                            0        0.00%
+origin.function_tokens_median                                          0        0.00%
+origin.function_tokens_std                                             0        0.00%
+origin.function_tokens_min                                             0        0.00%
+origin.function_tokens_max                                             0        0.00%
+origin.parameter_count_total                                           0        0.00%
+origin.parameters_mean                                                 0        0.00%
+origin.parameters_median                                               0        0.00%
+origin.parameters_std                                                  0        0.00%
+origin.parameters_min                                                  0        0.00%
+origin.parameters_max                                                  0        0.00%
+origin.function_length_mean                                            0        0.00%
+origin.function_length_median                                          0        0.00%
+origin.function_length_std                                             0        0.00%
+origin.function_length_min                                             0        0.00%
+origin.function_length_max                                             0        0.00%
+origin.halstead_length                                                 0        0.00%
+origin.halstead_vocab                                                  0        0.00%
+origin.halstead_volume                                                 0        0.00%
+origin.halstead_distinct_operators                                     0        0.00%
+origin.halstead_distinct_operands                                      0        0.00%
+origin.halstead_total_operators                                        0        0.00%
+origin.halstead_total_operands                                         0        0.00%
+origin.physical_lines                                                  0        0.00%
+origin.nonempty_lines                                                  0        0.00%
+origin.blank_lines                                                     0        0.00%
+origin.preprocessor_lines                                              0        0.00%
+origin.comment_only_lines_approx                                       0        0.00%
+origin.characters                                                      0        0.00%
+origin.bytes_utf8                                                      0        0.00%
+origin.keyword_if_count                                                0        0.00%
+origin.keyword_else_count                                              0        0.00%
+origin.keyword_for_count                                               0        0.00%
+origin.keyword_while_count                                             0        0.00%
+origin.keyword_do_count                                                0        0.00%
+origin.keyword_switch_count                                            0        0.00%
+origin.keyword_case_count                                              0        0.00%
+origin.keyword_goto_count                                              0        0.00%
+origin.keyword_return_count                                            0        0.00%
+origin.keyword_break_count                                             0        0.00%
+origin.keyword_continue_count                                          0        0.00%
+origin.logical_and_count                                               0        0.00%
+origin.logical_or_count                                                0        0.00%
+origin.ternary_question_count                                          0        0.00%
+origin.max_brace_nesting                                               0        0.00%
+origin.avg_open_brace_nesting                                          0        0.00%
+
+==========================================================================================
