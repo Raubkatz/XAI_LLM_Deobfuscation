@@ -6,9 +6,9 @@ This repository contains the machine-learning and explainability pipeline for th
 
 | Stage | Script | Purpose |
 |---|---|---|
-| 01 | `01_create_dataset.py` | Load `combined_metrics_with_origin.csv`, select features and one prediction target, rename the target to `class`, perform light cleaning, and create the final ML input CSV and descriptive report. |
-| 02 | `02_train_test_splits.py` | Create repeated stratified train/test splits over configurable random seeds. Optional random undersampling and ADASYN are applied **only to the training data**. |
-| 03 | `03_train_CatBoost.py` | Train one CatBoost model for every Stage-02 split. Supports ordinary CatBoost or optional Optuna/TPE hyperparameter optimization. |
+| 01 | `01_create_dataset.py` | Load `combined_metrics_with_origin.csv`, optionally select one decompiler scenario, select features and one prediction target, rename the target to `class`, perform light cleaning, and create the final ML input CSV and descriptive report. |
+| 02 | `02_train_test_splits.py` | Create repeated stratified train/test splits over configurable random seeds. Optional random undersampling, ADASYN, and custom minority sampling are applied **only to the training data**. |
+| 03 | `03_train_CatBoost.py` | Train one CatBoost model for every Stage-02 split. Supports ordinary CatBoost or optional Bayesian hyperparameter optimization using scikit-optimize `BayesSearchCV`. |
 | 04 | `04_explainability.py` | Load all trained CatBoost models and perform aggregated evaluation, feature importance, native SHAP, ICE/PDP, confusion-matrix, and predicted-class feature-distribution analysis. |
 
 Stage 01 loads the initial dataset:
@@ -17,13 +17,13 @@ Stage 01 loads the initial dataset:
 combined_metrics_with_origin.csv
 ```
 
-It explicitly selects the feature set and converts the selected prediction target to the common column name `class`.
+It optionally selects one decompiler scenario, explicitly selects the feature set, and converts the selected prediction target to the common column name `class`.
 
-Stage 02 performs the stratified split first and applies undersampling and/or ADASYN only to the training partition; the test partition remains untouched. 
+Stage 02 performs the stratified split first and applies undersampling, ADASYN, and/or custom minority sampling only to the training partition; the test partition remains untouched.
 
 Stage 03 creates an internal training/validation split from each Stage-02 training set. The outer test set is not used for hyperparameter optimization, early stopping, or model selection.
 
-Stage 04 aggregates evaluation and explainability results across the independently trained models, including performance statistics, confusion matrices, CatBoost feature importance, SHAP, ICE/PDP, and predicted-class feature distributions. 
+Stage 04 aggregates evaluation and explainability results across the independently trained models, including performance statistics, confusion matrices, CatBoost feature importance, SHAP, ICE/PDP, and predicted-class feature distributions.
 
 ## Basic Workflow
 
@@ -64,7 +64,11 @@ LLM_OBF_03_catboost_models/
 └── seed_0000/
     ├── best_model.cbm
     ├── best_model_parameters.json
+    ├── model_selection.csv
     ├── metrics.csv
+    ├── predictions_test.csv
+    ├── predictions_validation.csv
+    ├── bayes_search_results.csv
     └── training_report.txt
 ```
 
@@ -89,23 +93,66 @@ The selected source target is renamed to:
 class
 ```
 
+Stage 01 can optionally restrict the dataset to one decompiler:
+
+```python
+USE_SINGLE_DECOMPILER_SELECTION = True
+SELECTED_DECOMPILER = "ghidra"
+```
+
+or:
+
+```python
+USE_SINGLE_DECOMPILER_SELECTION = True
+SELECTED_DECOMPILER = "binja"
+```
+
+To retain all available decompiler scenarios:
+
+```python
+USE_SINGLE_DECOMPILER_SELECTION = False
+```
+
 In Stage 02, configure the number of repeated splits and balancing:
 
 ```python
 N_RANDOM_SEEDS = 100
 
-USE_UNDERSAMPLING = True
+USE_UNDERSAMPLING = False
 USE_ADASYN = True
+USE_CUSTOM_UNDERSAMPLING = True
+
+CUSTOM_MINORITY_FRACTION = 0.90
 ```
 
-The four balancing modes are:
+The main balancing modes are:
 
 ```python
-False, False   # no balancing
-True,  False   # undersampling only
-False, True    # ADASYN only
-True,  True    # undersampling + ADASYN
+False, False, False   # no balancing
+True,  False, False   # standard random undersampling only
+False, True,  False   # ADASYN only
+False, False, True    # custom minority sampling only
+False, True,  True    # ADASYN + custom minority sampling
+True,  True,  False   # standard random undersampling + ADASYN
 ```
+
+where the values correspond to:
+
+```text
+USE_UNDERSAMPLING
+USE_ADASYN
+USE_CUSTOM_UNDERSAMPLING
+```
+
+Standard undersampling and custom undersampling are alternative methods and must not both be enabled.
+
+When ADASYN and custom minority sampling are both enabled, ADASYN is applied first. The custom sample size is then calculated from the current post-ADASYN minority population. With:
+
+```python
+CUSTOM_MINORITY_FRACTION = 0.90
+```
+
+90% of the current minority population is retained and exactly the same number of majority observations is sampled.
 
 ADASYN requires numeric features and operates only on the training partition.
 
@@ -115,11 +162,63 @@ In Stage 03, enable or disable hyperparameter optimization:
 USE_HYPERPARAMETER_OPTIMIZATION = False
 
 # True:
-# CatBoost baseline + Optuna/TPE optimization
+# CatBoost baseline + Bayesian hyperparameter optimization
+# with scikit-optimize BayesSearchCV,
 # followed by validation-based model selection.
 ```
 
-When optimization is enabled, the optimized candidate is compared against the ordinary CatBoost baseline using the internal validation data only.
+When optimization is enabled, Stage 03 performs Bayesian optimization using:
+
+```python
+BAYES_N_ITER = 50
+BAYES_CV = 3
+BAYES_N_JOBS = 3
+
+MODEL_SELECTION_METRIC = "macro_f1"
+```
+
+The current CatBoost Bayesian search space is:
+
+```python
+BAYES_SEARCH_SPACE = {
+
+    "depth":
+        Integer(
+            4,
+            12,
+        ),
+
+    "iterations":
+        Integer(
+            500,
+            8000,
+        ),
+
+    "learning_rate":
+        Real(
+            0.01,
+            0.30,
+            prior="log-uniform",
+        ),
+
+    "l2_leaf_reg":
+        Real(
+            1.0,
+            20.0,
+            prior="log-uniform",
+        ),
+
+    "border_count":
+        Integer(
+            32,
+            255,
+        ),
+}
+```
+
+`BayesSearchCV` operates only on the internal training portion using stratified cross-validation. The separate internal validation set is not used during Bayesian optimization. It remains reserved for early stopping and baseline-versus-optimized model selection.
+
+When optimization is enabled, the optimized candidate is compared against the ordinary CatBoost baseline using the internal validation data only. The winning configuration is then refitted on the full Stage-02 training dataset and evaluated on the untouched Stage-02 test set.
 
 ## Python Environment
 
@@ -128,41 +227,43 @@ Python 3.11 is recommended. The pipeline was designed around a Python 3.11 envir
 A suitable environment is:
 
 ```bash
-conda create -n llm_obf_ml python=3.11.9
+conda create -n llm_obf_ml python=3.11
 conda activate llm_obf_ml
 ```
 
-Recommended pinned package versions:
+Recommended pinned package versions compatible with Python 3.11:
 
 ```text
-python==3.11.9
-numpy==2.1.3
-scipy==1.14.1
-pandas==2.2.3
-scikit-learn==1.5.2
-imbalanced-learn==0.12.4
-catboost==1.2.8
-optuna==4.1.0
-matplotlib==3.9.2
+python==3.11
+numpy==2.4.6
+scipy==1.17.1
+pandas==3.0.6
+scikit-learn==1.9.1
+imbalanced-learn==0.14.2
+catboost==1.2.10
+scikit-optimize==0.10.2
+matplotlib==3.11.2
 ```
 
 Install the required packages with:
 
 ```bash
 pip install \
-    numpy==2.1.3 \
-    scipy==1.14.1 \
-    pandas==2.2.3 \
-    scikit-learn==1.5.2 \
-    imbalanced-learn==0.12.4 \
-    catboost==1.2.8 \
-    optuna==4.1.0 \
-    matplotlib==3.9.2
+    numpy==2.4.6 \
+    scipy==1.17.1 \
+    pandas==3.0.6 \
+    scikit-learn==1.9.1 \
+    imbalanced-learn==0.14.2 \
+    catboost==1.2.10 \
+    scikit-optimize==0.10.2 \
+    matplotlib==3.11.2
 ```
 
-`imbalanced-learn` provides `RandomUnderSampler` and `ADASYN` used in Stage 02.
+`imbalanced-learn` provides `RandomUnderSampler` and `ADASYN` used in Stage 02. The custom minority-sampling implementation itself uses pandas and NumPy.
 
-`Optuna` is required only when hyperparameter optimization is enabled in Stage 03. The training script otherwise requires NumPy, pandas, scikit-learn, and CatBoost.
+`scikit-optimize` is required for Bayesian hyperparameter optimization in Stage 03. The training script uses `BayesSearchCV` together with `Integer` and `Real` search dimensions.
+
+The Stage-03 training script otherwise requires NumPy, pandas, scikit-learn, and CatBoost.
 
 No external `shap` package is required for Stage 04 because the analysis uses CatBoost's native SHAP implementation.
 
@@ -174,9 +275,10 @@ The complete workflow produces:
 
 - configurable feature/class datasets;
 - repeated stratified train/test splits;
-- optional undersampled and/or ADASYN-balanced training datasets;
+- optional standard undersampling, ADASYN, custom minority sampling, and combined balancing of training datasets;
 - CatBoost models for every random split;
-- optional Optuna/TPE optimized models;
+- optional Bayesian `BayesSearchCV` optimized CatBoost models;
+- Bayesian search-result CSVs and selected hyperparameter configurations;
 - training, validation, and held-out test metrics;
 - absolute and normalized confusion matrices;
 - CatBoost native feature importance;
