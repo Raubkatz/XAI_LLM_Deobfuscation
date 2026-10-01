@@ -67,7 +67,7 @@ USE_HYPERPARAMETER_OPTIMIZATION = False
 USE_HYPERPARAMETER_OPTIMIZATION = True
 
     -> train ordinary CatBoost baseline
-    -> run Bayesian-style Optuna/TPE optimization
+    -> run Bayesian hyperparameter optimization with scikit-optimize BayesSearchCV
     -> train optimized candidate
     -> compare baseline vs optimized candidate using INTERNAL VALIDATION ONLY
     -> select validation winner
@@ -103,7 +103,7 @@ LLM_OBF_03_catboost_models/
         predictions_test.csv
         predictions_validation.csv
         training_report.txt
-        optuna_trials.csv              # if optimization enabled
+        bayes_search_results.csv        # if optimization enabled
 
     seed_0001/
         ...
@@ -119,7 +119,7 @@ DEPENDENCIES
     numpy
     scikit-learn
     catboost
-    optuna        only when optimization is enabled
+    scikit-optimize    only when optimization is enabled
 """
 
 from __future__ import annotations
@@ -142,13 +142,20 @@ from sklearn.metrics import (
     confusion_matrix,
     f1_score,
     log_loss,
+    make_scorer,
     matthews_corrcoef,
     precision_score,
     recall_score,
     roc_auc_score,
 )
 
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import (
+    StratifiedKFold,
+    train_test_split,
+)
+
+from skopt import BayesSearchCV
+from skopt.space import Integer, Real
 
 
 # =============================================================================
@@ -200,10 +207,40 @@ STRATIFY_INTERNAL_SPLIT = True
 USE_HYPERPARAMETER_OPTIMIZATION = False
 
 
-# Optuna uses TPE, which is a sequential Bayesian-style optimizer.
-OPTUNA_N_TRIALS = 50
+# Bayesian optimization through scikit-optimize / BayesSearchCV.
+#
+# BAYES_N_ITER controls how many parameter combinations are proposed by the
+# Bayesian optimizer for EACH outer Stage-02 split.
+#
+# The uploaded Bayesian CatBoost reference script used 20 iterations.
+#
 
-OPTUNA_TIMEOUT_SECONDS: Optional[int] = None
+BAYES_N_ITER = 50
+
+
+# Number of cross-validation folds used INSIDE the internal training portion.
+#
+# IMPORTANT:
+#
+# The outer Stage-02 test set is never used here.
+#
+# The internal validation set is also not used during BayesSearchCV. It remains
+# reserved for:
+#
+#     - early stopping of the final optimized candidate
+#     - baseline-vs-optimized model selection
+#
+
+BAYES_CV = 3
+
+
+# Parallel workers used by BayesSearchCV.
+#
+# CatBoost itself may also use multiple threads, so reduce this value if the
+# machine becomes oversubscribed.
+#
+
+BAYES_N_JOBS = 3
 
 
 # Metric used to:
@@ -268,37 +305,73 @@ CATBOOST_DEVICES = "0"
 
 
 # =============================================================================
-# OPTUNA SEARCH SPACE
+# BAYESIAN CATBOOST SEARCH SPACE
 # =============================================================================
 #
-# These ranges are intentionally moderate.
+# Search ranges are taken from the uploaded BayesSearchCV CatBoost script.
 #
-# With 1000 outer splits even 50 trials per split already means potentially:
+# They are intentionally broad:
 #
-#     50,000 optimized CatBoost candidate models
+#     depth
+#         4 .. 12
 #
-# plus baselines and final refits.
+#     iterations
+#         500 .. 8000
 #
-# Therefore test the pipeline with MAX_SPLITS first.
+#     learning_rate
+#         0.01 .. 0.30
+#         log-uniform
+#
+#     l2_leaf_reg
+#         1.0 .. 20.0
+#         log-uniform
+#
+#     border_count
+#         32 .. 255
+#
+#
+# BayesSearchCV does NOT exhaustively evaluate every possible combination.
+# Instead, it sequentially proposes parameter configurations based on the
+# performance of previous evaluations.
+#
+# With many outer Stage-02 splits this can still be computationally expensive.
+# Therefore MAX_SPLITS can be used to test the pipeline first.
 #
 
-OPTUNA_MIN_ITERATIONS = 300
-OPTUNA_MAX_ITERATIONS = 2500
+BAYES_SEARCH_SPACE = {
 
-OPTUNA_MIN_DEPTH = 4
-OPTUNA_MAX_DEPTH = 10
+    "depth":
+        Integer(
+            4,
+            12,
+        ),
 
-OPTUNA_MIN_LEARNING_RATE = 0.01
-OPTUNA_MAX_LEARNING_RATE = 0.30
+    "iterations":
+        Integer(
+            500,
+            8000,
+        ),
 
-OPTUNA_MIN_L2 = 1e-3
-OPTUNA_MAX_L2 = 30.0
+    "learning_rate":
+        Real(
+            0.01,
+            0.30,
+            prior="log-uniform",
+        ),
 
-OPTUNA_MIN_RANDOM_STRENGTH = 1e-3
-OPTUNA_MAX_RANDOM_STRENGTH = 10.0
+    "l2_leaf_reg":
+        Real(
+            1.0,
+            20.0,
+            prior="log-uniform",
+        ),
 
-OPTUNA_MIN_BAGGING_TEMPERATURE = 0.0
-OPTUNA_MAX_BAGGING_TEMPERATURE = 10.0
+    "border_count":
+        Integer(
+            32,
+            255,
+        ),
+}
 
 
 # =============================================================================
@@ -1110,7 +1183,7 @@ def train_baseline_candidate(
 
 
 # =============================================================================
-# OPTUNA
+# BAYESIAN OPTIMIZATION - SCIKIT-OPTIMIZE
 # =============================================================================
 
 def optimize_catboost(
@@ -1125,147 +1198,220 @@ def optimize_catboost(
     Dict[str, Any],
     pd.DataFrame,
 ]:
+    """
+    Optimize CatBoost hyperparameters with scikit-optimize BayesSearchCV.
 
-    try:
+    IMPORTANT METHODOLOGICAL RULE
+    -----------------------------
 
-        import optuna
+    BayesSearchCV operates ONLY on X_train / y_train.
 
-    except ImportError as exc:
+    The separately held-out internal validation set:
 
-        raise ImportError(
-            "\nOptuna is required because "
-            "USE_HYPERPARAMETER_OPTIMIZATION=True.\n\n"
-            "Install it with:\n\n"
-            "    pip install optuna\n"
-        ) from exc
+        X_validation
+        y_validation
 
-    optuna.logging.set_verbosity(
-        optuna.logging.WARNING
-    )
+    is NOT passed into BayesSearchCV.
 
-    def objective(
-        trial,
-    ) -> float:
+    It remains reserved for:
 
-        parameters = {
+        - early stopping after the Bayesian search
+        - comparison of baseline vs optimized candidate
 
+    The outer Stage-02 test set remains completely untouched.
+    """
+
+    if BAYES_N_ITER <= 0:
+
+        raise ValueError(
+            "BAYES_N_ITER must be >= 1."
+        )
+
+    if BAYES_CV < 2:
+
+        raise ValueError(
+            "BAYES_CV must be >= 2."
+        )
+
+    # -------------------------------------------------------------------------
+    # Scoring
+    # -------------------------------------------------------------------------
+    #
+    # The Stage-03 script uses macro-F1 as its default model-selection metric.
+    #
+    # BayesSearchCV therefore uses the corresponding sklearn scorer.
+    # -------------------------------------------------------------------------
+
+    if MODEL_SELECTION_METRIC == "macro_f1":
+
+        bayes_scorer = make_scorer(
+            f1_score,
+            average="macro",
+            zero_division=0,
+        )
+
+    elif MODEL_SELECTION_METRIC == "balanced_accuracy":
+
+        bayes_scorer = "balanced_accuracy"
+
+    elif MODEL_SELECTION_METRIC == "accuracy":
+
+        bayes_scorer = "accuracy"
+
+    else:
+
+        raise ValueError(
+            "\nBayesSearchCV scoring is not configured for "
+            f"MODEL_SELECTION_METRIC={MODEL_SELECTION_METRIC!r}.\n\n"
+            "Supported values:\n"
+            "    macro_f1\n"
+            "    balanced_accuracy\n"
+            "    accuracy\n"
+        )
+
+    # -------------------------------------------------------------------------
+    # CatBoost estimator used INSIDE BayesSearchCV.
+    #
+    # Early stopping is deliberately NOT used during CV because every CV fold
+    # has its own validation partition. After the best parameter configuration
+    # is found, train_candidate_model() performs the normal Stage-03 early
+    # stopping against the dedicated internal validation set.
+    # -------------------------------------------------------------------------
+
+    base_parameters = make_catboost_parameters(
+        {
             "loss_function":
                 "MultiClass",
-
-            "iterations":
-                trial.suggest_int(
-                    "iterations",
-                    OPTUNA_MIN_ITERATIONS,
-                    OPTUNA_MAX_ITERATIONS,
-                ),
-
-            "depth":
-                trial.suggest_int(
-                    "depth",
-                    OPTUNA_MIN_DEPTH,
-                    OPTUNA_MAX_DEPTH,
-                ),
-
-            "learning_rate":
-                trial.suggest_float(
-                    "learning_rate",
-                    OPTUNA_MIN_LEARNING_RATE,
-                    OPTUNA_MAX_LEARNING_RATE,
-                    log=True,
-                ),
-
-            "l2_leaf_reg":
-                trial.suggest_float(
-                    "l2_leaf_reg",
-                    OPTUNA_MIN_L2,
-                    OPTUNA_MAX_L2,
-                    log=True,
-                ),
-
-            "random_strength":
-                trial.suggest_float(
-                    "random_strength",
-                    OPTUNA_MIN_RANDOM_STRENGTH,
-                    OPTUNA_MAX_RANDOM_STRENGTH,
-                    log=True,
-                ),
-
-            "bagging_temperature":
-                trial.suggest_float(
-                    "bagging_temperature",
-                    OPTUNA_MIN_BAGGING_TEMPERATURE,
-                    OPTUNA_MAX_BAGGING_TEMPERATURE,
-                ),
-
-            "bootstrap_type":
-                "Bayesian",
-        }
-
-        try:
-
-            model, _ = train_candidate_model(
-                parameters=parameters,
-                X_train=X_train,
-                y_train=y_train,
-                X_validation=X_validation,
-                y_validation=y_validation,
-                categorical_features=categorical_features,
-                random_seed=random_seed,
-            )
-
-            metrics, _, _ = evaluate_model(
-                model,
-                X_validation,
-                y_validation,
-            )
-
-            return get_selection_score(
-                metrics
-            )
-
-        except Exception:
-
-            return -1.0
-
-    sampler = optuna.samplers.TPESampler(
-        seed=random_seed,
+        },
+        random_seed,
     )
 
-    study = optuna.create_study(
-        direction="maximize",
-        sampler=sampler,
+    base_estimator = CatBoostClassifier(
+        **base_parameters
     )
 
-    study.optimize(
-        objective,
-        n_trials=OPTUNA_N_TRIALS,
-        timeout=OPTUNA_TIMEOUT_SECONDS,
-        show_progress_bar=False,
+    # -------------------------------------------------------------------------
+    # Deterministic stratified CV inside X_train only.
+    # -------------------------------------------------------------------------
+
+    cv = StratifiedKFold(
+        n_splits=BAYES_CV,
+        shuffle=True,
+        random_state=random_seed,
     )
 
-    trials = study.trials_dataframe()
+    bayes = BayesSearchCV(
+        estimator=base_estimator,
+        search_spaces=BAYES_SEARCH_SPACE,
+        n_iter=BAYES_N_ITER,
+        scoring=bayes_scorer,
+        cv=cv,
+        n_jobs=BAYES_N_JOBS,
+        random_state=random_seed,
+        verbose=0,
+        refit=True,
+        return_train_score=True,
+    )
 
-    trials.to_csv(
+    fit_kwargs: Dict[
+        str,
+        Any
+    ] = {}
+
+    if categorical_features:
+
+        fit_kwargs[
+            "cat_features"
+        ] = list(
+            categorical_features
+        )
+
+    bayes.fit(
+        X_train,
+        y_train,
+        **fit_kwargs,
+    )
+
+    # -------------------------------------------------------------------------
+    # Save complete Bayesian search history.
+    # -------------------------------------------------------------------------
+
+    search_results = pd.DataFrame(
+        bayes.cv_results_
+    )
+
+    search_results.to_csv(
         output_dir
-        / "optuna_trials.csv",
+        / "bayes_search_results.csv",
         index=False,
     )
 
-    best_parameters = dict(
-        study.best_params
-    )
+    # -------------------------------------------------------------------------
+    # Extract best parameter configuration.
+    #
+    # Runtime/reproducibility settings are added later by
+    # make_catboost_parameters().
+    # -------------------------------------------------------------------------
+
+    best_parameters = {
+        key:
+            (
+                value.item()
+                if isinstance(
+                    value,
+                    np.generic,
+                )
+                else value
+            )
+        for key, value in dict(
+            bayes.best_params_
+        ).items()
+    }
 
     best_parameters[
         "loss_function"
     ] = "MultiClass"
 
-    best_parameters[
-        "bootstrap_type"
-    ] = "Bayesian"
+    # -------------------------------------------------------------------------
+    # Persist a compact search summary as JSON.
+    # -------------------------------------------------------------------------
+
+    write_json(
+        output_dir
+        / "bayes_search_best.json",
+        {
+
+            "best_score":
+                float(
+                    bayes.best_score_
+                ),
+
+            "best_parameters":
+                best_parameters,
+
+            "n_iterations":
+                BAYES_N_ITER,
+
+            "cv_folds":
+                BAYES_CV,
+
+            "model_selection_metric":
+                MODEL_SELECTION_METRIC,
+
+            "search_space":
+                {
+                    key:
+                        str(
+                            value
+                        )
+                    for key, value in BAYES_SEARCH_SPACE.items()
+                },
+        },
+    )
 
     return (
         best_parameters,
-        trials,
+        search_results,
     )
 
 
@@ -1723,7 +1869,7 @@ def process_seed_directory(
     optimized_best_iteration = None
 
     # =========================================================================
-    # OPTUNA
+    # BAYESIAN OPTIMIZATION
     # =========================================================================
 
     if USE_HYPERPARAMETER_OPTIMIZATION:
@@ -2614,8 +2760,13 @@ def create_global_report(
     )
 
     lines.append(
-        f"Optuna trials per split: "
-        f"{OPTUNA_N_TRIALS if USE_HYPERPARAMETER_OPTIMIZATION else 0}"
+        f"Bayesian search iterations per split: "
+        f"{BAYES_N_ITER if USE_HYPERPARAMETER_OPTIMIZATION else 0}"
+    )
+
+    lines.append(
+        f"Bayesian CV folds: "
+        f"{BAYES_CV if USE_HYPERPARAMETER_OPTIMIZATION else 0}"
     )
 
     lines.append(
@@ -2829,8 +2980,13 @@ def main() -> None:
     if USE_HYPERPARAMETER_OPTIMIZATION:
 
         print(
-            f"Optuna trials/split:       "
-            f"{OPTUNA_N_TRIALS}"
+            f"Bayes iterations/split:    "
+            f"{BAYES_N_ITER}"
+        )
+
+        print(
+            f"Bayes CV folds:            "
+            f"{BAYES_CV}"
         )
 
     print()

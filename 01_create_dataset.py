@@ -1,18 +1,32 @@
 #!/usr/bin/env python3
 """
-01_LLM_OBF_prepare_dataset.py
+01_create_dataset.py
 
 Stage 01 of the LLM deobfuscation machine-learning pipeline.
 
+INPUT
+=====
+
+combined_metrics_with_origin.csv
+
+
+This CSV contains both:
+
+    - LLM evaluation/result metrics
+    - origin/source-code complexity metrics
+
+
 This script ONLY:
 
-    1. loads the previously generated combined_metrics.csv
-    2. selects the configured FEATURES
-    3. selects ONE configured target column
-    4. renames the target column to "class"
-    5. performs very light initial cleaning
-    6. writes one prepared CSV
-    7. writes one descriptive TXT report
+    1. loads the merged CSV
+    2. optionally selects one decompiler scenario
+    3. selects the configured FEATURES
+    4. selects ONE configured target column
+    5. renames the target column to "class"
+    6. performs very light initial cleaning
+    7. writes one prepared CSV
+    8. writes one descriptive TXT report
+
 
 This script does NOT perform:
 
@@ -24,9 +38,10 @@ This script does NOT perform:
     - feature scaling
     - normalization
     - categorical encoding
-    - feature selection
+    - feature selection beyond the explicit FEATURES list
     - model training
     - hyperparameter optimization
+
 
 The resulting CSV is the input for Stage 02.
 """
@@ -45,30 +60,40 @@ import pandas as pd
 # =============================================================================
 
 INPUT_CSV = Path(
-    "/home/sebastian/PRGRMS/LLM_deobfuscation_analysis/llm_obf/"
-    "combined_metrics.csv"
+    "./"
+    "combined_metrics_with_origin.csv"
 )
+
 
 OUTPUT_DIR = Path(
     "LLM_OBF_01_prepared_dataset"
 )
 
-OUTPUT_CSV = OUTPUT_DIR / "LLM_OBF_dataset.csv"
 
-OUTPUT_REPORT = OUTPUT_DIR / "LLM_OBF_dataset_report.txt"
+OUTPUT_CSV = (
+    OUTPUT_DIR
+    / "LLM_OBF_dataset.csv"
+)
+
+
+OUTPUT_REPORT = (
+    OUTPUT_DIR
+    / "LLM_OBF_dataset_report.txt"
+)
 
 
 # =============================================================================
 # TARGET
 # =============================================================================
 #
-# Select ONE source column that should become the prediction target.
+# Select exactly ONE source column that should become the prediction target.
 #
-# It will be renamed to:
+# The selected column will be renamed:
 #
 #     class
 #
-# in the output CSV.
+# in the final Stage-01 CSV.
+#
 #
 # Examples:
 #
@@ -78,86 +103,433 @@ OUTPUT_REPORT = OUTPUT_DIR / "LLM_OBF_dataset_report.txt"
 # TARGET_SOURCE_COLUMN = "optimization"
 # TARGET_SOURCE_COLUMN = "category"
 #
+# TARGET_SOURCE_COLUMN = "exe_pass"
+# TARGET_SOURCE_COLUMN = "syntax_pass_rate"
+#
+#
+# Origin metrics may also technically be selected as targets if required:
+#
+# TARGET_SOURCE_COLUMN = "origin.cyclomatic"
+#
 # =============================================================================
 
-#TARGET_SOURCE_COLUMN = "obfuscation_type"
+TARGET_SOURCE_COLUMN = "exe_pass"
+
 
 TARGET_COLUMN = "class"
-TARGET_SOURCE_COLUMN = "exe_pass"
+
+
+# =============================================================================
+# OPTIONAL SINGLE-DECOMPILER SELECTION
+# =============================================================================
+#
+# False:
+#
+#     use all decompiler scenarios exactly as before.
+#
+# True:
+#
+#     retain only rows belonging to SELECTED_DECOMPILER before the final
+#     Stage-01 feature/target dataset is created.
+#
+#
+# Expected values:
+#
+#     "ghidra"
+#     "binja"
+#
+#
+# Example:
+#
+#     USE_SINGLE_DECOMPILER_SELECTION = True
+#     SELECTED_DECOMPILER = "ghidra"
+#
+# results in:
+#
+#     only ghidra rows
+#
+#
+# Example:
+#
+#     USE_SINGLE_DECOMPILER_SELECTION = True
+#     SELECTED_DECOMPILER = "binja"
+#
+# results in:
+#
+#     only binja rows
+#
+#
+# Example:
+#
+#     USE_SINGLE_DECOMPILER_SELECTION = False
+#
+# results in:
+#
+#     ghidra + binja
+#
+#
+# Selection is case-insensitive.
+#
+# Therefore:
+#
+#     "GHIDRA"
+#
+# and:
+#
+#     "ghidra"
+#
+# are treated identically.
+#
+# =============================================================================
+
+USE_SINGLE_DECOMPILER_SELECTION = True
+
+
+SELECTED_DECOMPILER = "ghidra"
 
 
 # =============================================================================
 # FEATURES
 # =============================================================================
 #
-# This is intentionally a manually editable list.
+# This is intentionally a MANUALLY EDITABLE feature list.
 #
-# Initially all potentially useful columns are listed.
-# Comment out anything you do not want to use later.
+# Comment out any features that should NOT be used by the machine-learning
+# model.
 #
-# The target source column is automatically removed from FEATURES if it is
-# accidentally still listed here.
+# The selected TARGET_SOURCE_COLUMN is automatically removed from the feature
+# list even if it remains listed below.
+#
+#
+# IMPORTANT
+# =========
+#
+# Identifiers and path-like metadata are shown below for completeness but are
+# commented out by default because they can allow trivial sample memorization.
 #
 # =============================================================================
 
 FEATURES: List[str] = [
 
-    # -------------------------------------------------------------------------
-    # Dataset / experiment information
-    # -------------------------------------------------------------------------
+    # =========================================================================
+    # DATASET / EXPERIMENT INFORMATION
+    # =========================================================================
+    #
+    # Enable only deliberately.
+    #
+    # These can contain experiment identity information.
+    # =========================================================================
 
-    #"category",
-    #"filename",
-    #"obfuscation_type",
-    #"optimization",
-    #"decompiler",
-    #"llm",
+    # "category",
+    # "filename",
+    # "obfuscation_type",
+    # "optimization",
+    # "experiment_suffix",
+    # "decompiler",
+    # "llm",
 
-    # -------------------------------------------------------------------------
-    # Compilation / execution metrics
-    # -------------------------------------------------------------------------
 
-    #"syntax_pass_rate",
-    #"exe_pass",
-    #"compile_and_link_rate",
+    # =========================================================================
+    # EXECUTION / COMPILATION METRICS
+    # =========================================================================
 
-    # -------------------------------------------------------------------------
-    # Deobfuscated-code metrics
-    # -------------------------------------------------------------------------
+    # "syntax_pass_rate",
 
-    "simplification.deobf_nloc",
-    "simplification.deobf_func_num",
-    "simplification.deobf_cyclomatic",
-    "simplification.deobf_halstead_length",
-    "simplification.deobf_avg_ccn",
+    # "exe_pass",
 
-    # -------------------------------------------------------------------------
-    # Simplification metrics
-    # -------------------------------------------------------------------------
+    # "compile_and_link_rate",
 
-    "simplification.decrease_nloc",
-    "simplification.decrease_cyclomatic",
-    "simplification.decrease_halstead_length",
-    "simplification.nloc_difference_score",
 
-    # -------------------------------------------------------------------------
-    # Similarity metrics
-    # -------------------------------------------------------------------------
+    # =========================================================================
+    # DEOBFUSCATED-CODE COMPLEXITY
+    # =========================================================================
 
-    "similarity.codebleu",
-    "similarity.ngram_match_score",
-    "similarity.weighted_ngram_match_score",
-    "similarity.syntax_match_score",
-    "similarity.dataflow_match_score",
+    # "simplification.deobf_nloc",
 
-    # -------------------------------------------------------------------------
-    # Combined metrics
-    # -------------------------------------------------------------------------
+    # "simplification.deobf_func_num",
 
-    #"combined.pass",
-    #"combined.simplification",
-    #"combined.similarity",
-    #"combined.total",
+    # "simplification.deobf_cyclomatic",
+
+    # "simplification.deobf_halstead_length",
+
+    # "simplification.deobf_avg_ccn",
+
+
+    # =========================================================================
+    # DEOBFUSCATION / SIMPLIFICATION CHANGE METRICS
+    # =========================================================================
+
+    # "simplification.decrease_nloc",
+
+    # "simplification.decrease_cyclomatic",
+
+    # "simplification.decrease_halstead_length",
+
+    # "simplification.nloc_difference_score",
+
+
+    # =========================================================================
+    # SIMILARITY METRICS
+    # =========================================================================
+
+    # "similarity.codebleu",
+
+    # "similarity.ngram_match_score",
+
+    # "similarity.weighted_ngram_match_score",
+
+    # "similarity.syntax_match_score",
+
+    # "similarity.dataflow_match_score",
+
+
+    # =========================================================================
+    # COMBINED RESULT METRICS
+    # =========================================================================
+
+    # "combined.pass",
+
+    # "combined.simplification",
+
+    # "combined.similarity",
+
+    # "combined.total",
+
+
+    # =========================================================================
+    # ORIGIN COMPLEXITY
+    # =========================================================================
+    #
+    # These are the core metrics corresponding to the complexity conventions
+    # already used in simplification.py.
+    # =========================================================================
+
+    # "origin.nloc",
+
+    # "origin.func_num",
+
+    # "origin.cyclomatic",
+
+    # "origin.tokens",
+
+    # "origin.avg_ccn",
+
+
+    # =========================================================================
+    # ORIGIN CYCLOMATIC-COMPLEXITY DISTRIBUTION
+    # =========================================================================
+
+    "origin.ccn_mean",
+
+    "origin.ccn_median",
+
+    "origin.ccn_std",
+
+    "origin.ccn_min",
+
+    "origin.ccn_max",
+
+
+    # =========================================================================
+    # ORIGIN FUNCTION-NLOC DISTRIBUTION
+    # =========================================================================
+
+    "origin.function_nloc_mean",
+
+    "origin.function_nloc_median",
+
+    "origin.function_nloc_std",
+
+    "origin.function_nloc_min",
+
+    "origin.function_nloc_max",
+
+
+    # =========================================================================
+    # ORIGIN FUNCTION-TOKEN DISTRIBUTION
+    # =========================================================================
+
+    "origin.function_tokens_mean",
+
+    "origin.function_tokens_median",
+
+    "origin.function_tokens_std",
+
+    "origin.function_tokens_min",
+
+    "origin.function_tokens_max",
+
+
+    # =========================================================================
+    # ORIGIN FUNCTION PARAMETER STATISTICS
+    # =========================================================================
+
+    "origin.parameter_count_total",
+
+    "origin.parameters_mean",
+
+    "origin.parameters_median",
+
+    "origin.parameters_std",
+
+    "origin.parameters_min",
+
+    "origin.parameters_max",
+
+
+    # =========================================================================
+    # ORIGIN FUNCTION-LENGTH STATISTICS
+    # =========================================================================
+
+    "origin.function_length_mean",
+
+    "origin.function_length_median",
+
+    "origin.function_length_std",
+
+    "origin.function_length_min",
+
+    "origin.function_length_max",
+
+
+    # =========================================================================
+    # ORIGIN HALSTEAD METRICS
+    # =========================================================================
+
+    "origin.halstead_length",
+
+    "origin.halstead_vocab",
+
+    "origin.halstead_volume",
+
+    "origin.halstead_distinct_operators",
+
+    "origin.halstead_distinct_operands",
+
+    "origin.halstead_total_operators",
+
+    "origin.halstead_total_operands",
+
+
+    # =========================================================================
+    # ORIGIN SOURCE-SIZE STATISTICS
+    # =========================================================================
+
+    "origin.physical_lines",
+
+    "origin.nonempty_lines",
+
+    "origin.blank_lines",
+
+    "origin.preprocessor_lines",
+
+    "origin.comment_only_lines_approx",
+
+    "origin.characters",
+
+    "origin.bytes_utf8",
+
+
+    # =========================================================================
+    # ORIGIN CONTROL-FLOW COUNTS
+    # =========================================================================
+
+    "origin.keyword_if_count",
+
+    "origin.keyword_else_count",
+
+    "origin.keyword_for_count",
+
+    "origin.keyword_while_count",
+
+    "origin.keyword_do_count",
+
+    "origin.keyword_switch_count",
+
+    "origin.keyword_case_count",
+
+    "origin.keyword_goto_count",
+
+    "origin.keyword_return_count",
+
+    "origin.keyword_break_count",
+
+    "origin.keyword_continue_count",
+
+    "origin.logical_and_count",
+
+    "origin.logical_or_count",
+
+    "origin.ternary_question_count",
+
+
+    # =========================================================================
+    # ORIGIN STRUCTURAL NESTING
+    # =========================================================================
+
+    "origin.max_brace_nesting",
+
+    "origin.avg_open_brace_nesting",
+
+
+    # =========================================================================
+    # OPTIONAL ORIGIN QUALITY / EXTRACTION INFORMATION
+    # =========================================================================
+    #
+    # Usually I would NOT use these as predictive ML features.
+    #
+    # They are shown here so they are easy to activate if required.
+    # =========================================================================
+
+    # "source_empty",
+
+    # "lizard_parse_success",
+
+    # "gcc_syntax_checked",
+
+    # "gcc_syntax_pass",
+
+
+    # =========================================================================
+    # ORIGIN GENERATION METADATA
+    # =========================================================================
+    #
+    # Usually exclude these from model input because they identify the
+    # construction process rather than source complexity itself.
+    # =========================================================================
+
+    # "compiler",
+
+    # "gcc_version",
+
+    # "obfuscator",
+
+    # "tigress_version",
+
+
+    # =========================================================================
+    # UNIQUE / PATH-LIKE IDENTIFIERS
+    # =========================================================================
+    #
+    # DO NOT normally use these for prediction.
+    #
+    # They are retained in the merged source CSV for traceability but should
+    # normally remain excluded from FEATURES.
+    # =========================================================================
+
+    # "experiment_folder",
+
+    # "sample_id",
+
+    # "merge_key",
+
+    # "c_filename",
+
+    # "c_path",
+
+    # "source_sha256",
+
+    # "json_path",
 ]
 
 
@@ -183,6 +555,7 @@ DROP_ROWS_WITH_MISSING_CLASS = True
 def clean_dataframe(
     df: pd.DataFrame,
 ) -> pd.DataFrame:
+
     """
     Perform only minimal cleaning needed to create the Stage-01 CSV.
     """
@@ -194,12 +567,14 @@ def clean_dataframe(
     # -------------------------------------------------------------------------
 
     df.columns = [
-        str(column).strip()
+        str(
+            column
+        ).strip()
         for column in df.columns
     ]
 
     # -------------------------------------------------------------------------
-    # Remove accidental pandas index columns
+    # Remove accidental pandas-index columns
     # -------------------------------------------------------------------------
 
     if REMOVE_UNNAMED_COLUMNS:
@@ -207,7 +582,11 @@ def clean_dataframe(
         unnamed_columns = [
             column
             for column in df.columns
-            if str(column).lower().startswith("unnamed:")
+            if str(
+                column
+            ).lower().startswith(
+                "unnamed:"
+            )
         ]
 
         if unnamed_columns:
@@ -239,7 +618,7 @@ def clean_dataframe(
         )
 
     # -------------------------------------------------------------------------
-    # Replace positive / negative infinity
+    # Replace +/- infinity
     # -------------------------------------------------------------------------
 
     if REPLACE_INFINITY_WITH_NAN:
@@ -258,18 +637,24 @@ def clean_dataframe(
 def format_number(
     value,
 ) -> str:
-    """
-    Format numeric values for the TXT report.
-    """
 
-    if pd.isna(value):
+    if pd.isna(
+        value
+    ):
+
         return "NaN"
 
     try:
-        return f"{float(value):.6f}"
+
+        return (
+            f"{float(value):.6f}"
+        )
 
     except Exception:
-        return str(value)
+
+        return str(
+            value
+        )
 
 
 # =============================================================================
@@ -280,50 +665,87 @@ def create_report(
     df: pd.DataFrame,
     features: List[str],
 ) -> str:
-    """
-    Create a descriptive TXT report for the final Stage-01 CSV.
-    """
 
     lines: List[str] = []
 
     separator = "=" * 90
+
     sub_separator = "-" * 90
 
     # =========================================================================
     # GENERAL
     # =========================================================================
 
-    lines.append(separator)
-    lines.append("LLM DEOBFUSCATION MACHINE-LEARNING DATASET REPORT")
-    lines.append(separator)
+    lines.append(
+        separator
+    )
+
+    lines.append(
+        "LLM DEOBFUSCATION MACHINE-LEARNING DATASET REPORT"
+    )
+
+    lines.append(
+        separator
+    )
+
     lines.append("")
 
-    lines.append(f"Dataset rows:       {len(df):,}")
-    lines.append(f"Feature columns:    {len(features):,}")
-    lines.append(f"Target column:      {TARGET_COLUMN}")
-    lines.append(f"Total columns:      {len(df.columns):,}")
+    lines.append(
+        f"Dataset rows:       "
+        f"{len(df):,}"
+    )
+
+    lines.append(
+        f"Feature columns:    "
+        f"{len(features):,}"
+    )
+
+    lines.append(
+        f"Target column:      "
+        f"{TARGET_COLUMN}"
+    )
+
+    lines.append(
+        f"Total columns:      "
+        f"{len(df.columns):,}"
+    )
 
     lines.append("")
 
     # =========================================================================
-    # TARGET / CLASS DISTRIBUTION
+    # CLASS DISTRIBUTION
     # =========================================================================
 
-    lines.append(separator)
-    lines.append("CLASS DISTRIBUTION")
-    lines.append(separator)
+    lines.append(
+        separator
+    )
+
+    lines.append(
+        "CLASS DISTRIBUTION"
+    )
+
+    lines.append(
+        separator
+    )
+
     lines.append("")
 
-    class_counts = df[TARGET_COLUMN].value_counts(
+    class_counts = df[
+        TARGET_COLUMN
+    ].value_counts(
         dropna=False
     )
 
-    total = len(df)
+    total = len(
+        df
+    )
 
     for class_value, count in class_counts.items():
 
         percentage = (
-            100.0 * count / total
+            100.0
+            * count
+            / total
             if total > 0
             else 0.0
         )
@@ -337,7 +759,7 @@ def create_report(
     lines.append("")
 
     # -------------------------------------------------------------------------
-    # Imbalance statistics
+    # Imbalance
     # -------------------------------------------------------------------------
 
     non_missing_counts = df[
@@ -346,10 +768,17 @@ def create_report(
         dropna=True
     )
 
-    if len(non_missing_counts) >= 2:
+    if len(
+        non_missing_counts
+    ) >= 2:
 
-        majority_class = non_missing_counts.idxmax()
-        minority_class = non_missing_counts.idxmin()
+        majority_class = (
+            non_missing_counts.idxmax()
+        )
+
+        minority_class = (
+            non_missing_counts.idxmin()
+        )
 
         majority_count = int(
             non_missing_counts.max()
@@ -360,7 +789,8 @@ def create_report(
         )
 
         imbalance_ratio = (
-            majority_count / minority_count
+            majority_count
+            / minority_count
             if minority_count > 0
             else np.inf
         )
@@ -408,25 +838,42 @@ def create_report(
     # MISSING VALUES
     # =========================================================================
 
-    lines.append(separator)
-    lines.append("MISSING VALUES")
-    lines.append(separator)
+    lines.append(
+        separator
+    )
+
+    lines.append(
+        "MISSING VALUES"
+    )
+
+    lines.append(
+        separator
+    )
+
     lines.append("")
 
     for column in df.columns:
 
         missing = int(
-            df[column].isna().sum()
+            df[
+                column
+            ].isna().sum()
         )
 
         missing_fraction = (
-            100.0 * missing / len(df)
-            if len(df) > 0
+            100.0
+            * missing
+            / len(
+                df
+            )
+            if len(
+                df
+            ) > 0
             else 0.0
         )
 
         lines.append(
-            f"{column:<55}"
+            f"{column:<60}"
             f"{missing:>12,}"
             f"{missing_fraction:>12.2f}%"
         )
@@ -437,44 +884,67 @@ def create_report(
     # FEATURE STATISTICS
     # =========================================================================
 
-    lines.append(separator)
-    lines.append("FEATURE STATISTICS")
-    lines.append(separator)
+    lines.append(
+        separator
+    )
+
+    lines.append(
+        "FEATURE STATISTICS"
+    )
+
+    lines.append(
+        separator
+    )
+
     lines.append("")
 
     for feature in features:
 
-        series = df[feature]
-
-        lines.append(sub_separator)
-        lines.append(f"FEATURE: {feature}")
-        lines.append(sub_separator)
+        series = df[
+            feature
+        ]
 
         lines.append(
-            f"Pandas dtype:       {series.dtype}"
+            sub_separator
         )
 
         lines.append(
-            f"Non-missing:        {series.notna().sum():,}"
+            f"FEATURE: {feature}"
         )
 
         lines.append(
-            f"Missing:            {series.isna().sum():,}"
+            sub_separator
         )
 
         lines.append(
-            f"Unique non-missing: {series.nunique(dropna=True):,}"
+            f"Pandas dtype:       "
+            f"{series.dtype}"
+        )
+
+        lines.append(
+            f"Non-missing:        "
+            f"{series.notna().sum():,}"
+        )
+
+        lines.append(
+            f"Missing:            "
+            f"{series.isna().sum():,}"
+        )
+
+        lines.append(
+            f"Unique non-missing: "
+            f"{series.nunique(dropna=True):,}"
         )
 
         lines.append("")
 
         # ---------------------------------------------------------------------
-        # Determine whether the feature is genuinely numeric
+        # Numeric detection
         # ---------------------------------------------------------------------
 
         numeric_series = pd.to_numeric(
             series,
-            errors="coerce"
+            errors="coerce",
         )
 
         original_non_missing = int(
@@ -485,20 +955,19 @@ def create_report(
             numeric_series.notna().sum()
         )
 
-        # Treat as numeric only when all non-missing values can be interpreted
-        # numerically.
         is_numeric = (
             original_non_missing > 0
-            and numeric_non_missing == original_non_missing
+            and
+            numeric_non_missing
+            == original_non_missing
         )
-
-        # ---------------------------------------------------------------------
-        # Numeric statistics
-        # ---------------------------------------------------------------------
 
         if is_numeric:
 
-            lines.append("TYPE: NUMERIC")
+            lines.append(
+                "TYPE: NUMERIC"
+            )
+
             lines.append("")
 
             lines.append(
@@ -536,33 +1005,45 @@ def create_report(
                 f"{format_number(numeric_series.quantile(0.75))}"
             )
 
-        # ---------------------------------------------------------------------
-        # Categorical / symbolic statistics
-        # ---------------------------------------------------------------------
-
         else:
 
-            lines.append("TYPE: CATEGORICAL / SYMBOLIC")
+            lines.append(
+                "TYPE: CATEGORICAL / SYMBOLIC"
+            )
+
             lines.append("")
 
             counts = series.value_counts(
                 dropna=False
             )
 
-            lines.append("Value counts:")
+            lines.append(
+                "Value counts:"
+            )
+
             lines.append("")
 
             for value, count in counts.items():
 
                 label = (
                     "<MISSING>"
-                    if pd.isna(value)
-                    else str(value)
+                    if pd.isna(
+                        value
+                    )
+                    else str(
+                        value
+                    )
                 )
 
                 percentage = (
-                    100.0 * count / len(series)
-                    if len(series) > 0
+                    100.0
+                    * count
+                    / len(
+                        series
+                    )
+                    if len(
+                        series
+                    )
                     else 0.0
                 )
 
@@ -578,9 +1059,18 @@ def create_report(
     # COMPLETE COLUMN LIST
     # =========================================================================
 
-    lines.append(separator)
-    lines.append("FINAL CSV COLUMN ORDER")
-    lines.append(separator)
+    lines.append(
+        separator
+    )
+
+    lines.append(
+        "FINAL CSV COLUMN ORDER"
+    )
+
+    lines.append(
+        separator
+    )
+
     lines.append("")
 
     for index, column in enumerate(
@@ -588,21 +1078,28 @@ def create_report(
         start=1,
     ):
 
-        if column == TARGET_COLUMN:
-            role = "TARGET"
-        else:
-            role = "FEATURE"
+        role = (
+            "TARGET"
+            if column
+            == TARGET_COLUMN
+            else "FEATURE"
+        )
 
         lines.append(
             f"{index:>3}. "
-            f"{column:<60} "
+            f"{column:<65} "
             f"[{role}]"
         )
 
     lines.append("")
-    lines.append(separator)
 
-    return "\n".join(lines)
+    lines.append(
+        separator
+    )
+
+    return "\n".join(
+        lines
+    )
 
 
 # =============================================================================
@@ -627,14 +1124,46 @@ def main() -> None:
         exist_ok=True,
     )
 
-    print("=" * 80)
-    print("LLM OBFUSCATION ML - STAGE 01")
-    print("CREATE INITIAL MACHINE-LEARNING CSV")
-    print("=" * 80)
+    print(
+        "=" * 90
+    )
+
+    print(
+        "LLM OBFUSCATION ML - STAGE 01"
+    )
+
+    print(
+        "CREATE MACHINE-LEARNING DATASET FROM MERGED METRICS"
+    )
+
+    print(
+        "=" * 90
+    )
 
     print()
-    print(f"Input:  {INPUT_CSV.resolve()}")
-    print(f"Target: {TARGET_SOURCE_COLUMN}")
+
+    print(
+        f"Input:  "
+        f"{INPUT_CSV.resolve()}"
+    )
+
+    print(
+        f"Target: "
+        f"{TARGET_SOURCE_COLUMN}"
+    )
+
+    print(
+        f"Single decompiler selection: "
+        f"{USE_SINGLE_DECOMPILER_SELECTION}"
+    )
+
+    if USE_SINGLE_DECOMPILER_SELECTION:
+
+        print(
+            f"Selected decompiler: "
+            f"{SELECTED_DECOMPILER}"
+        )
+
     print()
 
     # =========================================================================
@@ -653,7 +1182,7 @@ def main() -> None:
     )
 
     # =========================================================================
-    # LIGHT CLEANING
+    # CLEAN
     # =========================================================================
 
     df = clean_dataframe(
@@ -661,15 +1190,147 @@ def main() -> None:
     )
 
     # =========================================================================
-    # CHECK TARGET
+    # OPTIONAL SINGLE-DECOMPILER SELECTION
+    # =========================================================================
+    #
+    # False:
+    #
+    #     no filtering
+    #
+    # True:
+    #
+    #     keep only rows corresponding to SELECTED_DECOMPILER
+    #
+    #
+    # This happens BEFORE feature selection.
+    #
+    # Therefore "decompiler" does NOT need to be included in FEATURES in order
+    # to select a single decompiler scenario.
     # =========================================================================
 
-    if TARGET_SOURCE_COLUMN not in df.columns:
+    rows_before_decompiler_selection = len(
+        df
+    )
+
+    available_decompilers: List[str] = []
+
+    if USE_SINGLE_DECOMPILER_SELECTION:
+
+        if "decompiler" not in df.columns:
+
+            raise ValueError(
+                "\nSingle-decompiler selection is enabled, but the column "
+                "'decompiler' does not exist in the merged CSV."
+            )
+
+        available_decompilers = sorted(
+            {
+                str(
+                    value
+                )
+                .strip()
+                .lower()
+                for value in df[
+                    "decompiler"
+                ].dropna().unique()
+            }
+        )
+
+        selected_decompiler_normalized = (
+            str(
+                SELECTED_DECOMPILER
+            )
+            .strip()
+            .lower()
+        )
+
+        if (
+            selected_decompiler_normalized
+            not in available_decompilers
+        ):
+
+            raise ValueError(
+                "\nSelected decompiler does not exist in the merged CSV:\n\n"
+                f"    {SELECTED_DECOMPILER}\n\n"
+                "Available decompilers:\n\n"
+                + "\n".join(
+                    f"    {value}"
+                    for value in available_decompilers
+                )
+            )
+
+        decompiler_normalized = (
+            df[
+                "decompiler"
+            ]
+            .astype(
+                "string"
+            )
+            .str.strip()
+            .str.lower()
+        )
+
+        df = df.loc[
+            decompiler_normalized
+            == selected_decompiler_normalized
+        ].copy()
+
+        df = df.reset_index(
+            drop=True
+        )
+
+    rows_removed_decompiler_selection = (
+        rows_before_decompiler_selection
+        - len(
+            df
+        )
+    )
+
+    # =========================================================================
+    # DECOMPILER-SELECTION OUTPUT
+    # =========================================================================
+
+    if USE_SINGLE_DECOMPILER_SELECTION:
+
+        print()
+
+        print(
+            "Single-decompiler selection applied:"
+        )
+
+        print(
+            f"    Selected:      "
+            f"{SELECTED_DECOMPILER}"
+        )
+
+        print(
+            f"    Rows before:   "
+            f"{rows_before_decompiler_selection:,}"
+        )
+
+        print(
+            f"    Rows removed:  "
+            f"{rows_removed_decompiler_selection:,}"
+        )
+
+        print(
+            f"    Rows retained: "
+            f"{len(df):,}"
+        )
+
+    # =========================================================================
+    # TARGET CHECK
+    # =========================================================================
+
+    if (
+        TARGET_SOURCE_COLUMN
+        not in df.columns
+    ):
 
         raise ValueError(
-            f"\nTarget column does not exist:\n"
+            "\nTarget column does not exist:\n"
             f"    {TARGET_SOURCE_COLUMN}\n\n"
-            f"Available columns:\n"
+            "Available columns:\n"
             + "\n".join(
                 f"    {column}"
                 for column in df.columns
@@ -679,25 +1340,57 @@ def main() -> None:
     # =========================================================================
     # ACTIVE FEATURES
     # =========================================================================
-
+    #
     # Automatically prevent direct target leakage.
+    # =========================================================================
 
     active_features = [
         feature
         for feature in FEATURES
-        if feature != TARGET_SOURCE_COLUMN
+        if feature
+        != TARGET_SOURCE_COLUMN
     ]
+
+    # -------------------------------------------------------------------------
+    # Check duplicate entries in FEATURES
+    # -------------------------------------------------------------------------
+
+    duplicate_features = sorted(
+        {
+            feature
+            for feature in active_features
+            if active_features.count(
+                feature
+            ) > 1
+        }
+    )
+
+    if duplicate_features:
+
+        raise ValueError(
+            "\nDuplicate entries exist in FEATURES:\n"
+            + "\n".join(
+                f"    {feature}"
+                for feature in duplicate_features
+            )
+        )
+
+    # -------------------------------------------------------------------------
+    # Check missing features
+    # -------------------------------------------------------------------------
 
     missing_features = [
         feature
         for feature in active_features
-        if feature not in df.columns
+        if feature
+        not in df.columns
     ]
 
     if missing_features:
 
         raise ValueError(
-            "\nThe following configured FEATURES are missing from the CSV:\n"
+            "\nThe following configured FEATURES are missing "
+            "from the merged CSV:\n"
             + "\n".join(
                 f"    {feature}"
                 for feature in missing_features
@@ -710,16 +1403,18 @@ def main() -> None:
 
     selected_columns = (
         active_features
-        + [TARGET_SOURCE_COLUMN]
+        + [
+            TARGET_SOURCE_COLUMN
+        ]
     )
 
     prepared = df[
         selected_columns
     ].copy()
 
-    # -------------------------------------------------------------------------
-    # Rename target to "class"
-    # -------------------------------------------------------------------------
+    # =========================================================================
+    # RENAME TARGET
+    # =========================================================================
 
     prepared = prepared.rename(
         columns={
@@ -728,9 +1423,9 @@ def main() -> None:
         }
     )
 
-    # -------------------------------------------------------------------------
-    # Drop rows without target
-    # -------------------------------------------------------------------------
+    # =========================================================================
+    # DROP MISSING TARGET
+    # =========================================================================
 
     rows_before_missing_class = len(
         prepared
@@ -739,24 +1434,24 @@ def main() -> None:
     if DROP_ROWS_WITH_MISSING_CLASS:
 
         prepared = prepared[
-            prepared[TARGET_COLUMN].notna()
+            prepared[
+                TARGET_COLUMN
+            ].notna()
         ].copy()
 
     rows_removed_missing_class = (
         rows_before_missing_class
-        - len(prepared)
+        - len(
+            prepared
+        )
     )
-
-    # -------------------------------------------------------------------------
-    # Reset row numbers
-    # -------------------------------------------------------------------------
 
     prepared = prepared.reset_index(
         drop=True
     )
 
     # =========================================================================
-    # SAVE CSV
+    # SAVE
     # =========================================================================
 
     prepared.to_csv(
@@ -765,7 +1460,7 @@ def main() -> None:
     )
 
     # =========================================================================
-    # CREATE REPORT
+    # REPORT
     # =========================================================================
 
     report = create_report(
@@ -774,18 +1469,41 @@ def main() -> None:
     )
 
     report_header = (
+
         f"Input CSV:\n"
         f"{INPUT_CSV.resolve()}\n\n"
+
         f"Output CSV:\n"
         f"{OUTPUT_CSV.resolve()}\n\n"
-        f"Original target column: {TARGET_SOURCE_COLUMN}\n"
-        f"Output target column:   {TARGET_COLUMN}\n"
+
+        f"Original target column: "
+        f"{TARGET_SOURCE_COLUMN}\n"
+
+        f"Output target column:   "
+        f"{TARGET_COLUMN}\n\n"
+
+        f"Single decompiler selection enabled: "
+        f"{USE_SINGLE_DECOMPILER_SELECTION}\n"
+
+        f"Selected decompiler: "
+        f"{SELECTED_DECOMPILER if USE_SINGLE_DECOMPILER_SELECTION else '<ALL>'}\n"
+
+        f"Rows before decompiler selection: "
+        f"{rows_before_decompiler_selection:,}\n"
+
+        f"Rows removed by decompiler selection: "
+        f"{rows_removed_decompiler_selection:,}\n"
+
+        f"Rows after decompiler selection: "
+        f"{len(df):,}\n\n"
+
         f"Rows removed because class was missing: "
         f"{rows_removed_missing_class:,}\n\n"
     )
 
     OUTPUT_REPORT.write_text(
-        report_header + report,
+        report_header
+        + report,
         encoding="utf-8",
     )
 
@@ -794,9 +1512,48 @@ def main() -> None:
     # =========================================================================
 
     print()
-    print("=" * 80)
-    print("STAGE 01 COMPLETE")
-    print("=" * 80)
+
+    print(
+        "=" * 90
+    )
+
+    print(
+        "STAGE 01 COMPLETE"
+    )
+
+    print(
+        "=" * 90
+    )
+
+    print()
+
+    print(
+        f"Single decompiler selection: "
+        f"{USE_SINGLE_DECOMPILER_SELECTION}"
+    )
+
+    if USE_SINGLE_DECOMPILER_SELECTION:
+
+        print(
+            f"Selected decompiler: "
+            f"{SELECTED_DECOMPILER}"
+        )
+
+        print(
+            f"Rows before selection: "
+            f"{rows_before_decompiler_selection:,}"
+        )
+
+        print(
+            f"Rows removed by selection: "
+            f"{rows_removed_decompiler_selection:,}"
+        )
+
+        print(
+            f"Rows retained by selection: "
+            f"{len(df):,}"
+        )
+
     print()
 
     print(
@@ -815,13 +1572,20 @@ def main() -> None:
     )
 
     print(
+        f"Source target:   "
+        f"{TARGET_SOURCE_COLUMN}"
+    )
+
+    print(
         f"Number classes:  "
         f"{prepared[TARGET_COLUMN].nunique(dropna=True):,}"
     )
 
     print()
 
-    print("Class distribution:")
+    print(
+        "Class distribution:"
+    )
 
     counts = prepared[
         TARGET_COLUMN
@@ -832,7 +1596,15 @@ def main() -> None:
     for value, count in counts.items():
 
         percentage = (
-            100.0 * count / len(prepared)
+            100.0
+            * count
+            / len(
+                prepared
+            )
+            if len(
+                prepared
+            )
+            else 0.0
         )
 
         print(
@@ -842,16 +1614,20 @@ def main() -> None:
         )
 
     print()
-    print(
-        f"CSV report:      "
-        f"{OUTPUT_CSV}"
-    )
 
     print(
-        f"Statistics:      "
-        f"{OUTPUT_REPORT}"
+        f"CSV:"
+        f"\n    {OUTPUT_CSV}"
+    )
+
+    print()
+
+    print(
+        f"Report:"
+        f"\n    {OUTPUT_REPORT}"
     )
 
 
 if __name__ == "__main__":
+
     main()

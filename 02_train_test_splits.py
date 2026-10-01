@@ -6,6 +6,7 @@ Stage 02 of the LLM deobfuscation machine-learning pipeline.
 
 Input
 -----
+
 LLM_OBF_01_prepared_dataset/
     LLM_OBF_dataset.csv
 
@@ -24,9 +25,119 @@ seeds.
 Optional TRAINING-SET balancing methods:
 
     1. no balancing
-    2. random undersampling
+    2. standard random undersampling
     3. ADASYN
-    4. random undersampling + ADASYN
+    4. standard random undersampling + ADASYN
+    5. custom minority sampling
+    6. ADASYN + custom minority sampling
+
+
+CUSTOM MINORITY SAMPLING
+------------------------
+
+The custom method is designed for binary classification.
+
+The custom method:
+
+    1. identifies the minority and majority class labels
+    2. uses the CURRENT number of minority observations
+    3. retains a configured fraction of the CURRENT minority class
+    4. randomly samples exactly the same number of majority observations
+
+
+Example WITHOUT ADASYN:
+
+    original minority = 1,000
+
+    CUSTOM_MINORITY_FRACTION = 0.90
+
+    retained minority = 900
+    retained majority = 900
+
+    final training data = 1,800
+
+
+Example WITH ADASYN:
+
+    original minority = 1,000
+
+    ADASYN increases minority to:
+
+        3,000
+
+    CUSTOM_MINORITY_FRACTION = 0.90
+
+    retained minority =
+
+        floor(3,000 * 0.90)
+        = 2,700
+
+    retained majority = 2,700
+
+    final training data = 5,400
+
+
+Therefore the custom sampling size is calculated AFTER ADASYN when ADASYN is
+enabled.
+
+
+INDEPENDENT SWITCHES
+--------------------
+
+The following four configurations are supported:
+
+
+1. NO ADASYN, NO CUSTOM UNDERSAMPLING
+
+    USE_ADASYN = False
+    USE_CUSTOM_UNDERSAMPLING = False
+
+    training
+        ->
+    unchanged training
+
+
+2. ADASYN ONLY
+
+    USE_ADASYN = True
+    USE_CUSTOM_UNDERSAMPLING = False
+
+    training
+        ->
+    ADASYN
+        ->
+    final training
+
+
+3. CUSTOM UNDERSAMPLING ONLY
+
+    USE_ADASYN = False
+    USE_CUSTOM_UNDERSAMPLING = True
+
+    training
+        ->
+    custom sampling
+        ->
+    final training
+
+
+4. ADASYN + CUSTOM UNDERSAMPLING
+
+    USE_ADASYN = True
+    USE_CUSTOM_UNDERSAMPLING = True
+
+    training
+        ->
+    ADASYN
+        ->
+    determine CURRENT post-ADASYN minority count
+        ->
+    retain configured fraction
+        ->
+    sample same number from majority
+        ->
+    final training
+
 
 IMPORTANT METHODOLOGICAL RULE
 -----------------------------
@@ -50,10 +161,7 @@ The workflow for EVERY random seed is:
             |
             v
 
-    optional undersampling
-            |
-            v
-    optional ADASYN
+    configured balancing method
 
             |
             v
@@ -66,6 +174,7 @@ The TEST dataset is NEVER:
     - undersampled
     - oversampled
     - processed with ADASYN
+    - processed with custom minority sampling
     - balanced
 
 This prevents evaluation leakage and preserves the natural test distribution.
@@ -182,8 +291,6 @@ STRATIFY = True
 #
 #     0, 1, 2, ..., 999
 #
-# You can change the starting value if desired.
-#
 
 N_RANDOM_SEEDS = 100
 
@@ -201,77 +308,138 @@ RANDOM_SEEDS = list(
 # BALANCING SWITCHES
 # =============================================================================
 #
-# These two switches give the four requested modes.
+# ALL METHODS CAN BE SWITCHED INDEPENDENTLY.
 #
 #
-# USE_UNDERSAMPLING = False
-# USE_ADASYN         = False
+# -------------------------------------------------------------------------
+# MODE 1
+# -------------------------------------------------------------------------
+#
+# USE_UNDERSAMPLING        = False
+# USE_ADASYN               = False
+# USE_CUSTOM_UNDERSAMPLING = False
 #
 #     -> no balancing
 #
 #
-# USE_UNDERSAMPLING = True
-# USE_ADASYN         = False
+# -------------------------------------------------------------------------
+# MODE 2
+# -------------------------------------------------------------------------
 #
-#     -> undersampling only
-#
-#
-# USE_UNDERSAMPLING = False
-# USE_ADASYN         = True
+# USE_UNDERSAMPLING        = False
+# USE_ADASYN               = True
+# USE_CUSTOM_UNDERSAMPLING = False
 #
 #     -> ADASYN only
 #
 #
-# USE_UNDERSAMPLING = True
-# USE_ADASYN         = True
+# -------------------------------------------------------------------------
+# MODE 3
+# -------------------------------------------------------------------------
 #
-#     -> undersampling first, then ADASYN
+# USE_UNDERSAMPLING        = False
+# USE_ADASYN               = False
+# USE_CUSTOM_UNDERSAMPLING = True
 #
+#     -> custom undersampling only
+#
+#
+# -------------------------------------------------------------------------
+# MODE 4
+# -------------------------------------------------------------------------
+#
+# USE_UNDERSAMPLING        = False
+# USE_ADASYN               = True
+# USE_CUSTOM_UNDERSAMPLING = True
+#
+#     -> ADASYN FIRST
+#     -> custom undersampling SECOND
+#
+#
+# -------------------------------------------------------------------------
+# ORIGINAL STANDARD UNDERSAMPLING
+# -------------------------------------------------------------------------
+#
+# USE_UNDERSAMPLING        = True
+# USE_CUSTOM_UNDERSAMPLING = False
+#
+# keeps the original RandomUnderSampler implementation.
+#
+#
+# IMPORTANT:
+#
+# USE_UNDERSAMPLING and USE_CUSTOM_UNDERSAMPLING represent two alternative
+# undersampling methods and must NOT both be True.
+#
+# =============================================================================
 
-USE_UNDERSAMPLING = True
+
+# Original standard RandomUnderSampler.
+
+USE_UNDERSAMPLING = False
+
+
+# Synthetic minority oversampling.
 
 USE_ADASYN = True
 
 
+# New custom minority/majority sampling.
+
+USE_CUSTOM_UNDERSAMPLING = True
+
+
 # =============================================================================
-# UNDERSAMPLING SETTINGS
+# STANDARD UNDERSAMPLING SETTINGS
 # =============================================================================
-#
-# Fraction of each class that may be retained relative to the minority class.
-#
-# Recommended interpretation:
-#
-#     1.0
-#
-# means that undersampling produces an exactly balanced training dataset:
-#
-#     majority = minority
-#
-# For binary classes.
-#
-# With multiclass targets, RandomUnderSampler automatically reduces larger
-# classes according to UNDERSAMPLING_STRATEGY.
-#
 
 UNDERSAMPLING_STRATEGY = "auto"
 
 
 # =============================================================================
-# ADASYN SETTINGS
+# CUSTOM MINORITY SAMPLING SETTINGS
 # =============================================================================
 #
-# "auto":
+# Fraction of the CURRENT minority population retained.
 #
-#     resample all minority classes toward the majority class.
 #
+# WITHOUT ADASYN:
+#
+#     current minority
+#         =
+#     original training minority
+#
+#
+# WITH ADASYN:
+#
+#     current minority
+#         =
+#     minority population AFTER ADASYN
+#
+#
+# Example:
+#
+#     after ADASYN:
+#
+#         minority = 4,000
+#
+#     CUSTOM_MINORITY_FRACTION = 0.90
+#
+#     custom sample:
+#
+#         minority = 3,600
+#         majority = 3,600
+#
+# =============================================================================
+
+CUSTOM_MINORITY_FRACTION = 0.90
+
+
+# =============================================================================
+# ADASYN SETTINGS
+# =============================================================================
 
 ADASYN_SAMPLING_STRATEGY = "auto"
-
-
-# Number of nearest neighbours used by ADASYN.
-#
-# imbalanced-learn's conventional default is 5.
-#
 
 ADASYN_N_NEIGHBORS = 5
 
@@ -302,9 +470,6 @@ def ensure_directory(
 def class_counts(
     values: pd.Series,
 ) -> Dict[str, int]:
-    """
-    Return class counts in a JSON/report-friendly dictionary.
-    """
 
     counts = values.value_counts(
         dropna=False
@@ -315,8 +480,11 @@ def class_counts(
     for key, value in counts.items():
 
         if pd.isna(key):
+
             label = "<MISSING>"
+
         else:
+
             label = str(key)
 
         result[label] = int(value)
@@ -327,9 +495,6 @@ def class_counts(
 def class_percentages(
     values: pd.Series,
 ) -> Dict[str, float]:
-    """
-    Return class percentages.
-    """
 
     counts = values.value_counts(
         normalize=True,
@@ -341,8 +506,11 @@ def class_percentages(
     for key, value in counts.items():
 
         if pd.isna(key):
+
             label = "<MISSING>"
+
         else:
+
             label = str(key)
 
         result[label] = (
@@ -355,11 +523,6 @@ def class_percentages(
 def imbalance_ratio(
     values: pd.Series,
 ) -> float:
-    """
-    Majority-class count / minority-class count.
-
-    Returns NaN if fewer than two classes exist.
-    """
 
     counts = values.value_counts(
         dropna=True
@@ -411,6 +574,38 @@ def validate_configuration() -> None:
             "ADASYN_N_NEIGHBORS must be >= 1."
         )
 
+    if not 0.0 < CUSTOM_MINORITY_FRACTION <= 1.0:
+
+        raise ValueError(
+            "\nCUSTOM_MINORITY_FRACTION must satisfy:\n\n"
+            "    0.0 < CUSTOM_MINORITY_FRACTION <= 1.0\n"
+        )
+
+    # -------------------------------------------------------------------------
+    # The two undersampling implementations are alternative methods.
+    # -------------------------------------------------------------------------
+
+    if (
+        USE_UNDERSAMPLING
+        and USE_CUSTOM_UNDERSAMPLING
+    ):
+
+        raise ValueError(
+            "\nUSE_UNDERSAMPLING and USE_CUSTOM_UNDERSAMPLING "
+            "cannot both be True.\n\n"
+            "Choose either:\n\n"
+            "    USE_UNDERSAMPLING = True\n\n"
+            "or:\n\n"
+            "    USE_CUSTOM_UNDERSAMPLING = True\n"
+        )
+
+    # -------------------------------------------------------------------------
+    # imbalanced-learn is only required for standard RandomUnderSampler
+    # and ADASYN.
+    #
+    # Custom sampling itself only uses pandas/numpy.
+    # -------------------------------------------------------------------------
+
     if (
         USE_UNDERSAMPLING
         or USE_ADASYN
@@ -420,7 +615,7 @@ def validate_configuration() -> None:
 
             raise ImportError(
                 "\nThe package 'imbalanced-learn' is required because "
-                "undersampling and/or ADASYN is enabled.\n\n"
+                "standard undersampling and/or ADASYN is enabled.\n\n"
                 "Install it with:\n\n"
                 "    pip install imbalanced-learn\n"
             )
@@ -433,11 +628,6 @@ def validate_configuration() -> None:
 def validate_adasyn_features(
     X: pd.DataFrame,
 ) -> None:
-    """
-    ADASYN requires a numeric feature space.
-
-    Fail explicitly when symbolic/categorical columns remain.
-    """
 
     if not USE_ADASYN:
 
@@ -473,16 +663,6 @@ def validate_adasyn_features(
 def prepare_numeric_for_adasyn(
     X_train: pd.DataFrame,
 ) -> pd.DataFrame:
-    """
-    ADASYN cannot work with NaN or infinity.
-
-    Missing numeric values are filled using medians calculated ONLY from the
-    current training split.
-
-    This function is called only when ADASYN is enabled.
-
-    The test set remains untouched.
-    """
 
     X = X_train.copy()
 
@@ -518,7 +698,7 @@ def prepare_numeric_for_adasyn(
 
 
 # =============================================================================
-# UNDERSAMPLING
+# STANDARD UNDERSAMPLING
 # =============================================================================
 
 def apply_undersampling(
@@ -563,14 +743,6 @@ def apply_undersampling(
 def calculate_safe_adasyn_neighbors(
     y_train: pd.Series,
 ) -> int:
-    """
-    ADASYN requires enough observations in minority classes.
-
-    n_neighbors must be smaller than the number of observations available in
-    the smallest class involved in oversampling.
-
-    Reduce the configured number automatically where necessary.
-    """
 
     counts = y_train.value_counts()
 
@@ -642,6 +814,274 @@ def apply_adasyn(
 
 
 # =============================================================================
+# CUSTOM MINORITY SAMPLING
+# =============================================================================
+
+def determine_binary_minority_majority_classes(
+    y_train: pd.Series,
+) -> Tuple[
+    object,
+    object,
+]:
+
+    counts = y_train.value_counts(
+        dropna=False
+    )
+
+    if len(counts) != 2:
+
+        raise ValueError(
+            "\nCustom minority sampling requires exactly two target classes.\n\n"
+            f"Number of classes found: {len(counts)}\n\n"
+            f"{counts.to_string()}\n"
+        )
+
+    minority_class = counts.idxmin()
+
+    majority_class = counts.idxmax()
+
+    return (
+        minority_class,
+        majority_class,
+    )
+
+
+def apply_custom_minority_sampling(
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    random_seed: int,
+    minority_class,
+    majority_class,
+) -> Tuple[
+    pd.DataFrame,
+    pd.Series,
+    Dict[str, object],
+]:
+    """
+    Custom binary-class balancing.
+
+    IMPORTANT:
+
+    The number retained from the minority class is calculated from the CURRENT
+    data passed into this function.
+
+    Therefore:
+
+        without ADASYN
+            -> based on original training minority count
+
+        with ADASYN
+            -> based on POST-ADASYN minority count
+    """
+
+    X_current = X_train.reset_index(
+        drop=True
+    ).copy()
+
+    y_current = y_train.reset_index(
+        drop=True
+    ).copy()
+
+    y_current.name = TARGET_COLUMN
+
+    # -------------------------------------------------------------------------
+    # CURRENT population after all previous operations.
+    #
+    # If ADASYN was enabled, these values therefore include synthetic samples.
+    # -------------------------------------------------------------------------
+
+    minority_indices = y_current[
+        y_current == minority_class
+    ].index
+
+    majority_indices = y_current[
+        y_current == majority_class
+    ].index
+
+    current_minority_count = len(
+        minority_indices
+    )
+
+    current_majority_count = len(
+        majority_indices
+    )
+
+    if current_minority_count <= 0:
+
+        raise ValueError(
+            "\nCustom minority sampling found no observations for minority "
+            f"class '{minority_class}'."
+        )
+
+    if current_majority_count <= 0:
+
+        raise ValueError(
+            "\nCustom minority sampling found no observations for majority "
+            f"class '{majority_class}'."
+        )
+
+    # -------------------------------------------------------------------------
+    # KEY CALCULATION
+    #
+    # The fraction is calculated from the ACTUAL CURRENT minority count.
+    #
+    # Example after ADASYN:
+    #
+    #     current minority = 5,000
+    #     fraction         = 0.90
+    #
+    #     requested = floor(5,000 * 0.90)
+    #               = 4,500
+    # -------------------------------------------------------------------------
+
+    requested_sample_size = int(
+        np.floor(
+            current_minority_count
+            * CUSTOM_MINORITY_FRACTION
+        )
+    )
+
+    requested_sample_size = max(
+        1,
+        requested_sample_size,
+    )
+
+    # -------------------------------------------------------------------------
+    # Need exactly the same number from each class.
+    #
+    # Normally the majority class has enough observations.
+    #
+    # The min() is only a safety mechanism in case ADASYN results in a minority
+    # population whose requested 90% is larger than the available majority.
+    # -------------------------------------------------------------------------
+
+    actual_sample_size = min(
+        requested_sample_size,
+        current_minority_count,
+        current_majority_count,
+    )
+
+    # -------------------------------------------------------------------------
+    # Sample minority.
+    # -------------------------------------------------------------------------
+
+    minority_selected = (
+        pd.Series(
+            minority_indices,
+            dtype=int,
+        )
+        .sample(
+            n=actual_sample_size,
+            replace=False,
+            random_state=random_seed,
+        )
+        .tolist()
+    )
+
+    # -------------------------------------------------------------------------
+    # Sample exactly the same number from majority.
+    # -------------------------------------------------------------------------
+
+    majority_selected = (
+        pd.Series(
+            majority_indices,
+            dtype=int,
+        )
+        .sample(
+            n=actual_sample_size,
+            replace=False,
+            random_state=random_seed + 1,
+        )
+        .tolist()
+    )
+
+    selected_indices = (
+        minority_selected
+        + majority_selected
+    )
+
+    # -------------------------------------------------------------------------
+    # Shuffle final balanced training set.
+    # -------------------------------------------------------------------------
+
+    rng = np.random.default_rng(
+        random_seed + 2
+    )
+
+    rng.shuffle(
+        selected_indices
+    )
+
+    X_resampled = (
+        X_current
+        .iloc[
+            selected_indices
+        ]
+        .reset_index(
+            drop=True
+        )
+    )
+
+    y_resampled = (
+        y_current
+        .iloc[
+            selected_indices
+        ]
+        .reset_index(
+            drop=True
+        )
+    )
+
+    y_resampled.name = TARGET_COLUMN
+
+    details: Dict[
+        str,
+        object
+    ] = {
+
+        "custom_minority_class":
+            str(
+                minority_class
+            ),
+
+        "custom_majority_class":
+            str(
+                majority_class
+            ),
+
+        "custom_minority_fraction":
+            CUSTOM_MINORITY_FRACTION,
+
+        "custom_current_minority_before_sampling":
+            current_minority_count,
+
+        "custom_current_majority_before_sampling":
+            current_majority_count,
+
+        "custom_requested_per_class":
+            requested_sample_size,
+
+        "custom_actual_per_class":
+            actual_sample_size,
+
+        "custom_final_minority":
+            actual_sample_size,
+
+        "custom_final_majority":
+            actual_sample_size,
+
+        "custom_final_total":
+            2 * actual_sample_size,
+    }
+
+    return (
+        X_resampled,
+        y_resampled,
+        details,
+    )
+
+
+# =============================================================================
 # BALANCING PIPELINE
 # =============================================================================
 
@@ -654,15 +1094,6 @@ def balance_training_data(
     pd.Series,
     Dict[str, object],
 ]:
-    """
-    Apply the configured balancing operations ONLY to training data.
-
-    Order when both methods are enabled:
-
-        original training data
-            -> undersampling
-            -> ADASYN
-    """
 
     X_current = X_train.copy()
 
@@ -675,64 +1106,195 @@ def balance_training_data(
                 y_current
             ),
 
-        "undersampling_enabled":
+        "standard_undersampling_enabled":
             USE_UNDERSAMPLING,
+
+        "custom_undersampling_enabled":
+            USE_CUSTOM_UNDERSAMPLING,
+
+        "custom_minority_fraction":
+            CUSTOM_MINORITY_FRACTION,
 
         "adasyn_enabled":
             USE_ADASYN,
     }
 
-    # -------------------------------------------------------------------------
-    # UNDERSAMPLING
-    # -------------------------------------------------------------------------
+    # =========================================================================
+    # CUSTOM PIPELINE
+    # =========================================================================
+    #
+    # Custom undersampling and ADASYN are independent switches.
+    #
+    # If custom sampling is enabled:
+    #
+    #     determine class identities
+    #
+    # then:
+    #
+    #     optional ADASYN
+    #
+    # then:
+    #
+    #     custom sampling using CURRENT post-ADASYN population
+    #
+    # =========================================================================
 
-    if USE_UNDERSAMPLING:
+    if USE_CUSTOM_UNDERSAMPLING:
 
-        X_current, y_current = apply_undersampling(
-            X_current,
-            y_current,
-            random_seed,
-        )
+        # ---------------------------------------------------------------------
+        # Determine minority/majority LABELS from the original training split.
+        #
+        # The labels remain fixed so that after ADASYN we still know which class
+        # was the original minority class.
+        # ---------------------------------------------------------------------
 
-        report[
-            "after_undersampling"
-        ] = class_counts(
+        (
+            minority_class,
+            majority_class,
+        ) = determine_binary_minority_majority_classes(
             y_current
         )
 
-    # -------------------------------------------------------------------------
-    # ADASYN
-    # -------------------------------------------------------------------------
-
-    if USE_ADASYN:
-
-        validate_adasyn_features(
-            X_current
+        report[
+            "original_minority_class"
+        ] = str(
+            minority_class
         )
 
-        X_current = prepare_numeric_for_adasyn(
-            X_current
+        report[
+            "original_majority_class"
+        ] = str(
+            majority_class
         )
+
+        # ---------------------------------------------------------------------
+        # OPTIONAL ADASYN FIRST
+        # ---------------------------------------------------------------------
+
+        if USE_ADASYN:
+
+            validate_adasyn_features(
+                X_current
+            )
+
+            X_current = prepare_numeric_for_adasyn(
+                X_current
+            )
+
+            (
+                X_current,
+                y_current,
+                actual_neighbors,
+            ) = apply_adasyn(
+                X_current,
+                y_current,
+                random_seed,
+            )
+
+            report[
+                "adasyn_n_neighbors"
+            ] = actual_neighbors
+
+            report[
+                "after_adasyn"
+            ] = class_counts(
+                y_current
+            )
+
+        # ---------------------------------------------------------------------
+        # CUSTOM UNDERSAMPLING
+        #
+        # IMPORTANT:
+        #
+        # X_current / y_current are passed HERE.
+        #
+        # Therefore, when ADASYN is enabled, the custom fraction is calculated
+        # from the new POST-ADASYN minority count.
+        # ---------------------------------------------------------------------
 
         (
             X_current,
             y_current,
-            actual_neighbors,
-        ) = apply_adasyn(
-            X_current,
-            y_current,
-            random_seed,
+            custom_details,
+        ) = apply_custom_minority_sampling(
+            X_train=X_current,
+            y_train=y_current,
+            random_seed=random_seed,
+            minority_class=minority_class,
+            majority_class=majority_class,
         )
 
         report[
-            "adasyn_n_neighbors"
-        ] = actual_neighbors
-
-        report[
-            "after_adasyn"
+            "after_custom_undersampling"
         ] = class_counts(
             y_current
         )
+
+        for key, value in custom_details.items():
+
+            report[
+                key
+            ] = value
+
+    # =========================================================================
+    # NON-CUSTOM PIPELINE
+    # =========================================================================
+
+    else:
+
+        # ---------------------------------------------------------------------
+        # OPTIONAL ORIGINAL STANDARD UNDERSAMPLING
+        # ---------------------------------------------------------------------
+
+        if USE_UNDERSAMPLING:
+
+            X_current, y_current = apply_undersampling(
+                X_current,
+                y_current,
+                random_seed,
+            )
+
+            report[
+                "after_standard_undersampling"
+            ] = class_counts(
+                y_current
+            )
+
+        # ---------------------------------------------------------------------
+        # OPTIONAL ADASYN
+        #
+        # This works even when standard undersampling is disabled.
+        # ---------------------------------------------------------------------
+
+        if USE_ADASYN:
+
+            validate_adasyn_features(
+                X_current
+            )
+
+            X_current = prepare_numeric_for_adasyn(
+                X_current
+            )
+
+            (
+                X_current,
+                y_current,
+                actual_neighbors,
+            ) = apply_adasyn(
+                X_current,
+                y_current,
+                random_seed,
+            )
+
+            report[
+                "adasyn_n_neighbors"
+            ] = actual_neighbors
+
+            report[
+                "after_adasyn"
+            ] = class_counts(
+                y_current
+            )
 
     report[
         "final_training_distribution"
@@ -765,10 +1327,13 @@ def create_split_report(
     separator = "=" * 90
 
     lines.append(separator)
+
     lines.append(
         "LLM DEOBFUSCATION ML - TRAIN / TEST SPLIT REPORT"
     )
+
     lines.append(separator)
+
     lines.append("")
 
     lines.append(
@@ -784,7 +1349,15 @@ def create_split_report(
     )
 
     lines.append(
-        f"Undersampling enabled:       {USE_UNDERSAMPLING}"
+        f"Standard undersampling:      {USE_UNDERSAMPLING}"
+    )
+
+    lines.append(
+        f"Custom undersampling:        {USE_CUSTOM_UNDERSAMPLING}"
+    )
+
+    lines.append(
+        f"Custom minority fraction:    {CUSTOM_MINORITY_FRACTION:.4f}"
     )
 
     lines.append(
@@ -835,7 +1408,9 @@ def create_split_report(
 
     append_distribution(
         lines,
-        original_dataset[TARGET_COLUMN],
+        original_dataset[
+            TARGET_COLUMN
+        ],
     )
 
     # -------------------------------------------------------------------------
@@ -850,7 +1425,9 @@ def create_split_report(
 
     append_distribution(
         lines,
-        train_before[TARGET_COLUMN],
+        train_before[
+            TARGET_COLUMN
+        ],
     )
 
     # -------------------------------------------------------------------------
@@ -865,7 +1442,9 @@ def create_split_report(
 
     append_distribution(
         lines,
-        train_after[TARGET_COLUMN],
+        train_after[
+            TARGET_COLUMN
+        ],
     )
 
     # -------------------------------------------------------------------------
@@ -880,7 +1459,9 @@ def create_split_report(
 
     append_distribution(
         lines,
-        test[TARGET_COLUMN],
+        test[
+            TARGET_COLUMN
+        ],
     )
 
     # -------------------------------------------------------------------------
@@ -994,8 +1575,18 @@ def main() -> None:
     )
 
     print(
-        f"Undersampling:   "
+        f"Standard under:  "
         f"{USE_UNDERSAMPLING}"
+    )
+
+    print(
+        f"Custom under:    "
+        f"{USE_CUSTOM_UNDERSAMPLING}"
+    )
+
+    print(
+        f"Custom fraction: "
+        f"{CUSTOM_MINORITY_FRACTION:.2%}"
     )
 
     print(
@@ -1021,8 +1612,6 @@ def main() -> None:
             "is missing from the Stage-01 CSV."
         )
 
-    # Remove completely empty rows defensively.
-
     dataset = (
         dataset
         .dropna(
@@ -1032,8 +1621,6 @@ def main() -> None:
             drop=True
         )
     )
-
-    # Missing target values cannot participate in stratification.
 
     dataset = dataset[
         dataset[
@@ -1082,7 +1669,16 @@ def main() -> None:
             "A stratified train/test split cannot be produced reliably."
         )
 
-    # ADASYN feature validation can already be performed globally.
+    if (
+        USE_CUSTOM_UNDERSAMPLING
+        and len(target_counts) != 2
+    ):
+
+        raise ValueError(
+            "\nUSE_CUSTOM_UNDERSAMPLING=True requires exactly two classes.\n\n"
+            f"Classes found: {len(target_counts)}\n\n"
+            f"{target_counts.to_string()}\n"
+        )
 
     if USE_ADASYN:
 
@@ -1113,7 +1709,9 @@ def main() -> None:
 
     print()
 
-    print("Complete dataset class distribution:")
+    print(
+        "Complete dataset class distribution:"
+    )
 
     for class_value, count in target_counts.items():
 
@@ -1156,10 +1754,6 @@ def main() -> None:
         start=1,
     ):
 
-        # ---------------------------------------------------------------------
-        # Stratified split
-        # ---------------------------------------------------------------------
-
         stratification_vector = (
             y
             if STRATIFY
@@ -1180,7 +1774,7 @@ def main() -> None:
         )
 
         # ---------------------------------------------------------------------
-        # Preserve pre-balancing training data
+        # Preserve pre-balancing training data.
         # ---------------------------------------------------------------------
 
         train_before = X_train.copy()
@@ -1190,7 +1784,7 @@ def main() -> None:
         ] = y_train.values
 
         # ---------------------------------------------------------------------
-        # TEST is constructed immediately and then left untouched.
+        # Test remains untouched.
         # ---------------------------------------------------------------------
 
         test_final = X_test.copy()
@@ -1200,7 +1794,7 @@ def main() -> None:
         ] = y_test.values
 
         # ---------------------------------------------------------------------
-        # Training balancing
+        # Training balancing.
         # ---------------------------------------------------------------------
 
         (
@@ -1220,7 +1814,7 @@ def main() -> None:
         ] = y_train_final.values
 
         # ---------------------------------------------------------------------
-        # Seed output directory
+        # Seed output.
         # ---------------------------------------------------------------------
 
         seed_directory = (
@@ -1232,29 +1826,17 @@ def main() -> None:
             seed_directory
         )
 
-        # ---------------------------------------------------------------------
-        # Save final training set
-        # ---------------------------------------------------------------------
-
         train_final.to_csv(
             seed_directory
             / "train.csv",
             index=False,
         )
 
-        # ---------------------------------------------------------------------
-        # Save untouched test set
-        # ---------------------------------------------------------------------
-
         test_final.to_csv(
             seed_directory
             / "test.csv",
             index=False,
         )
-
-        # ---------------------------------------------------------------------
-        # Optional original training data
-        # ---------------------------------------------------------------------
 
         if SAVE_UNBALANCED_TRAIN:
 
@@ -1263,10 +1845,6 @@ def main() -> None:
                 / "train_before_balancing.csv",
                 index=False,
             )
-
-        # ---------------------------------------------------------------------
-        # Per-seed report
-        # ---------------------------------------------------------------------
 
         split_report = create_split_report(
             random_seed=random_seed,
@@ -1284,10 +1862,6 @@ def main() -> None:
             split_report,
             encoding="utf-8",
         )
-
-        # ---------------------------------------------------------------------
-        # Summary row
-        # ---------------------------------------------------------------------
 
         train_before_counts = class_counts(
             y_train
@@ -1340,8 +1914,6 @@ def main() -> None:
                 ),
         }
 
-        # Add class-specific counts.
-
         all_classes = sorted(
             map(
                 str,
@@ -1376,10 +1948,6 @@ def main() -> None:
             summary_row
         )
 
-        # ---------------------------------------------------------------------
-        # Console progress
-        # ---------------------------------------------------------------------
-
         if (
             iteration == 1
             or iteration % 10 == 0
@@ -1408,22 +1976,37 @@ def main() -> None:
     )
 
     # =========================================================================
-    # MAIN REPORT
+    # DETERMINE BALANCING MODE
     # =========================================================================
 
     if (
+        USE_CUSTOM_UNDERSAMPLING
+        and USE_ADASYN
+    ):
+
+        balancing_mode = (
+            "ADASYN + custom minority sampling"
+        )
+
+    elif USE_CUSTOM_UNDERSAMPLING:
+
+        balancing_mode = (
+            "custom minority sampling only"
+        )
+
+    elif (
         USE_UNDERSAMPLING
         and USE_ADASYN
     ):
 
         balancing_mode = (
-            "undersampling + ADASYN"
+            "standard undersampling + ADASYN"
         )
 
     elif USE_UNDERSAMPLING:
 
         balancing_mode = (
-            "undersampling only"
+            "standard undersampling only"
         )
 
     elif USE_ADASYN:
@@ -1437,6 +2020,10 @@ def main() -> None:
         balancing_mode = (
             "none"
         )
+
+    # =========================================================================
+    # MAIN REPORT
+    # =========================================================================
 
     report_lines: List[str] = []
 
@@ -1517,8 +2104,28 @@ def main() -> None:
     )
 
     report_lines.append(
-        f"Undersampling strategy:     "
+        f"Standard undersampling:     "
+        f"{USE_UNDERSAMPLING}"
+    )
+
+    report_lines.append(
+        f"Standard under strategy:    "
         f"{UNDERSAMPLING_STRATEGY}"
+    )
+
+    report_lines.append(
+        f"Custom undersampling:       "
+        f"{USE_CUSTOM_UNDERSAMPLING}"
+    )
+
+    report_lines.append(
+        f"Custom minority fraction:   "
+        f"{CUSTOM_MINORITY_FRACTION:.6f}"
+    )
+
+    report_lines.append(
+        f"ADASYN enabled:             "
+        f"{USE_ADASYN}"
     )
 
     report_lines.append(
@@ -1537,9 +2144,33 @@ def main() -> None:
         "The test partition is created before any balancing and remains untouched."
     )
 
-    report_lines.append(
-        "Undersampling and ADASYN are applied only to the training partition."
-    )
+    if (
+        USE_CUSTOM_UNDERSAMPLING
+        and USE_ADASYN
+    ):
+
+        report_lines.append(
+            "ADASYN is applied first. The custom sampling fraction is then "
+            "calculated from the actual post-ADASYN minority population."
+        )
+
+    elif USE_CUSTOM_UNDERSAMPLING:
+
+        report_lines.append(
+            "Custom sampling is applied directly to the original training partition."
+        )
+
+    elif USE_ADASYN:
+
+        report_lines.append(
+            "ADASYN is applied to the training partition."
+        )
+
+    else:
+
+        report_lines.append(
+            "No synthetic/custom balancing is applied to the training partition."
+        )
 
     report_lines.append("")
 
@@ -1604,9 +2235,13 @@ def main() -> None:
     # =========================================================================
 
     print()
+
     print("=" * 90)
+
     print("STAGE 02 COMPLETE")
+
     print("=" * 90)
+
     print()
 
     print(
@@ -1636,4 +2271,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+
     main()
